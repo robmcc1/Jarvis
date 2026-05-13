@@ -18,6 +18,7 @@ const TEST_TONE_GAIN = 0.05;
 const TEST_TONE_FREQUENCY = 880;
 const MODEL_TEMPERATURE = 0.4;
 const MODEL_MAX_TOKENS = 500;
+const MODEL_LOAD_WAIT_TIMEOUT_MS = 5000;
 const DEFAULT_MODELS = [
   "openai/gpt-4.1-mini",
   "openai/gpt-4.1",
@@ -330,6 +331,7 @@ async function callGitHubModel(userText) {
   });
 
   messages.push({ role: "user", content: userText });
+  let lastRequestError;
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await fetch(GITHUB_MODELS_ENDPOINT, {
       method: "POST",
@@ -347,6 +349,7 @@ async function callGitHubModel(userText) {
 
     if (!response.ok) {
       const errText = await response.text();
+      lastRequestError = new Error(`GitHub Models request failed (${response.status}): ${errText}`);
       const shouldRetryWithFreshModelList = response.status === 400
         && errText.includes("unknown_model")
         && attempt === 0;
@@ -354,7 +357,7 @@ async function callGitHubModel(userText) {
         await refreshAvailableModels({ force: true, throwOnError: true });
         continue;
       }
-      throw new Error(`GitHub Models request failed (${response.status}): ${errText}`);
+      throw lastRequestError;
     }
 
     const data = await response.json();
@@ -364,7 +367,7 @@ async function callGitHubModel(userText) {
     messages.push({ role: "assistant", content: assistantText });
     return assistantText;
   }
-  throw new Error("GitHub Models request failed after retrying with a refreshed model list.");
+  throw lastRequestError || new Error("GitHub Models request failed.");
 }
 
 function speak(text) {
@@ -407,6 +410,30 @@ function setModelOptions(modelIds, preferredModel) {
   modelEl.value = selectedModel;
 }
 
+function getModelEntriesFromResponse(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.models)) return data.models;
+  return [];
+}
+
+function getModelId(model) {
+  if (typeof model === "string") return model;
+  if (typeof model?.id === "string") return model.id;
+  if (typeof model?.name === "string") return model.name;
+  return "";
+}
+
+async function waitForModelLoadToFinish() {
+  const start = Date.now();
+  while (isLoadingModels) {
+    if (Date.now() - start >= MODEL_LOAD_WAIT_TIMEOUT_MS) {
+      throw new Error("Timed out waiting for model list refresh to finish.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 async function refreshAvailableModels({ force = false, throwOnError = false } = {}) {
   const token = patEl.value.trim();
   if (!token) {
@@ -415,7 +442,10 @@ async function refreshAvailableModels({ force = false, throwOnError = false } = 
     return false;
   }
   if (!force && token === lastLoadedModelsToken) return true;
-  if (isLoadingModels) return token === lastLoadedModelsToken;
+  if (isLoadingModels) {
+    await waitForModelLoadToFinish();
+    if (!force && token === lastLoadedModelsToken) return true;
+  }
 
   isLoadingModels = true;
   try {
@@ -434,15 +464,9 @@ async function refreshAvailableModels({ force = false, throwOnError = false } = 
     }
 
     const data = await response.json();
-    const modelEntries = Array.isArray(data)
-      ? data
-      : Array.isArray(data?.data)
-        ? data.data
-        : Array.isArray(data?.models)
-          ? data.models
-          : [];
+    const modelEntries = getModelEntriesFromResponse(data);
     const availableModels = modelEntries
-      .map((model) => (typeof model === "string" ? model : model?.id || model?.name))
+      .map(getModelId)
       .filter(Boolean);
 
     if (!availableModels.length) {
