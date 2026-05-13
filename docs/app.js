@@ -22,6 +22,8 @@ let animationId;
 let speechRecognition;
 let interimTranscript = "";
 let finalTranscript = "";
+let testToneContext;
+let toneDestination;
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -148,21 +150,42 @@ async function setAudioOutputDevice() {
   }
 }
 
+async function ensureToneOutput() {
+  if (!testToneContext) {
+    testToneContext = new AudioContext();
+    toneDestination = testToneContext.createMediaStreamDestination();
+    audioOut.srcObject = toneDestination.stream;
+  }
+  if (testToneContext.state === "suspended") {
+    await testToneContext.resume();
+  }
+  try {
+    await audioOut.play();
+  } catch {
+    // User gesture is required in some browsers; click event usually satisfies this.
+  }
+}
+
 async function testSpeaker() {
   try {
     await setAudioOutputDevice();
-    const oscCtx = new AudioContext();
-    const oscillator = oscCtx.createOscillator();
-    const gain = oscCtx.createGain();
+    await ensureToneOutput();
+    const oscillator = testToneContext.createOscillator();
+    const gain = testToneContext.createGain();
     gain.gain.value = 0.05;
     oscillator.type = "sine";
     oscillator.frequency.value = 880;
-    oscillator.connect(gain).connect(oscCtx.destination);
+    oscillator.connect(gain).connect(toneDestination);
     oscillator.start();
-    oscillator.stop(oscCtx.currentTime + 0.25);
-    oscillator.onended = () => {
-      oscCtx.close();
-    };
+    oscillator.stop(testToneContext.currentTime + 0.25);
+    setTimeout(() => {
+      try {
+        oscillator.disconnect();
+        gain.disconnect();
+      } catch {
+        // no-op
+      }
+    }, 500);
     setStatus("Speaker test played");
   } catch (error) {
     addMessage("system", `Speaker test failed: ${error.message}`);
