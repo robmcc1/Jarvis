@@ -33,14 +33,13 @@ let testToneGain;
 let isListening = false;
 let isSpeakerTestActive = false;
 let isInitializingDevices = false;
-let ignoreNextEnableClick = false;
 
 function createAudioContext() {
-  const Ctor = window.AudioContext || window.webkitAudioContext;
-  if (!Ctor) {
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextConstructor) {
     throw new Error("Audio output is not supported in this browser.");
   }
-  return new Ctor();
+  return new AudioContextConstructor();
 }
 
 function setStatus(text) {
@@ -406,19 +405,20 @@ function endTalk() {
   // that we wait for the browser to deliver all final results before reading them.
 }
 
-enableBtn.addEventListener("click", () => {
-  if (ignoreNextEnableClick) {
-    ignoreNextEnableClick = false;
-    return;
-  }
-  initAudioDevices();
-});
-enableBtn.addEventListener("pointerup", (event) => {
-  if (event.pointerType !== "touch") return;
-  ignoreNextEnableClick = true;
-  setTimeout(() => {
-    ignoreNextEnableClick = false;
-  }, 500);
+if ("PointerEvent" in window) {
+  enableBtn.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "touch") event.preventDefault();
+    initAudioDevices();
+  });
+} else {
+  enableBtn.addEventListener("click", initAudioDevices);
+  enableBtn.addEventListener("touchstart", (event) => {
+    event.preventDefault();
+    initAudioDevices();
+  }, { passive: false });
+}
+enableBtn.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   initAudioDevices();
 });
