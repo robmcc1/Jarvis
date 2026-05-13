@@ -412,7 +412,10 @@ async function refreshAvailableModels({ force = false } = {}) {
     });
 
     if (!response.ok) {
-      throw new Error(await response.text());
+      const responseText = await response.text();
+      const responsePreview = responseText ? responseText.slice(0, 200) : "";
+      const detail = responsePreview ? ` ${responsePreview}` : "";
+      throw new Error(`Failed to load models (${response.status}).${detail}`);
     }
 
     const data = await response.json();
@@ -420,7 +423,7 @@ async function refreshAvailableModels({ force = false } = {}) {
     const availableModels = modelEntries.map((model) => model?.id).filter(Boolean);
 
     if (!availableModels.length) {
-      throw new Error("No models were returned for this token.");
+      throw new Error("No models were returned for this token. Please verify your PAT has access to GitHub Models.");
     }
 
     setModelOptions(availableModels, modelEl.value);
