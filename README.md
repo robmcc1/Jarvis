@@ -2,6 +2,8 @@
 
 Static GitHub Pages AI voice assistant inspired by Jarvis.
 
+https://robmcc1.github.io/Jarvis/
+
 ## Run
 
 1. Enable GitHub Pages for this repository and set source to `/docs`.
