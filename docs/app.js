@@ -414,10 +414,11 @@ function endTalk() {
 }
 
 enableBtn.addEventListener("click", initAudioDevices);
-enableBtn.addEventListener("touchstart", (event) => {
+enableBtn.addEventListener("pointerup", (event) => {
+  if (event.pointerType !== "touch") return;
   event.preventDefault();
   initAudioDevices();
-}, { passive: false });
+});
 speakTestBtn.addEventListener("click", testSpeaker);
 speakerSelectEl.addEventListener("change", setAudioOutputDevice);
 rememberPatEl.addEventListener("change", savePatIfNeeded);
