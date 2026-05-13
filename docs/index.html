@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jarvis Voice Assistant</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="panel visual-panel">
+        <h1>JARVIS</h1>
+        <canvas id="visualizer" width="600" height="600" aria-label="Voice visualizer"></canvas>
+        <p id="status" class="status">Idle</p>
+      </section>
+
+      <section class="panel controls-panel">
+        <h2>Control Center</h2>
+
+        <label>
+          GitHub Personal Access Token
+          <input id="pat" type="password" placeholder="ghp_..." autocomplete="off" />
+        </label>
+
+        <label class="inline">
+          <input id="rememberPat" type="checkbox" />
+          Remember PAT in this browser
+        </label>
+
+        <label>
+          Model
+          <select id="model">
+            <option value="openai/gpt-4o-mini">openai/gpt-4o-mini</option>
+            <option value="openai/gpt-4.1">openai/gpt-4.1</option>
+            <option value="meta/Llama-3.3-70B-Instruct">meta/Llama-3.3-70B-Instruct</option>
+            <option value="mistral-ai/Mistral-Large-2411">mistral-ai/Mistral-Large-2411</option>
+          </select>
+        </label>
+
+        <div class="row">
+          <button id="enableDevices">Enable Devices</button>
+          <button id="speakTest">Test Speaker</button>
+        </div>
+
+        <label>
+          Speaker
+          <select id="speakerSelect"></select>
+        </label>
+
+        <button id="ptt" class="ptt">Hold to Talk</button>
+        <p class="hint">Press and hold. Release to send.</p>
+
+        <div class="transcript-wrap">
+          <h3>Transcript</h3>
+          <p id="transcript">—</p>
+        </div>
+      </section>
+
+      <section class="panel chat-panel">
+        <h2>Conversation</h2>
+        <div id="chat" class="chat"></div>
+      </section>
+    </main>
+
+    <audio id="audioOut"></audio>
+    <script src="./app.js"></script>
+  </body>
+  </html>
