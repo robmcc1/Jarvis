@@ -39,6 +39,8 @@ let toneDestination;
 let testToneOscillator;
 let testToneGain;
 let isListening = false;
+let shouldKeepListening = false;
+let recognitionRestartTimer;
 let isSpeakerTestActive = false;
 let isInitializingDevices = false;
 let isLoadingModels = false;
@@ -291,8 +293,11 @@ function buildSpeechRecognition() {
   };
   rec.onerror = (event) => {
     isListening = false;
-    addMessage("system", `Speech recognition error: ${event.error}`);
-    setStatus("Error");
+    const stoppedByUser = event.error === "aborted" && !shouldKeepListening;
+    if (!stoppedByUser) {
+      addMessage("system", `Speech recognition error: ${event.error}`);
+      setStatus("Error");
+    }
   };
   // Process the captured transcript only after recognition fully stops.
   // Reading transcripts immediately after stop() is a race condition on mobile —
@@ -300,9 +305,31 @@ function buildSpeechRecognition() {
   rec.onend = () => {
     const wasListening = isListening;
     isListening = false;
+    const shouldRestart = shouldKeepListening;
     const text = `${finalTranscript}${interimTranscript}`.trim();
+    finalTranscript = "";
+    interimTranscript = "";
+    transcriptEl.textContent = "—";
+
+    const restartIfNeeded = () => {
+      if (!shouldRestart) return;
+      clearTimeout(recognitionRestartTimer);
+      recognitionRestartTimer = setTimeout(() => {
+        if (!shouldKeepListening || !speechRecognition || isListening) return;
+        try {
+          speechRecognition.start();
+          isListening = true;
+          setStatus("Listening");
+        } catch (error) {
+          addMessage("system", `Could not restart recognition: ${error.message}`);
+          setStatus("Error");
+        }
+      }, 150);
+    };
+
     if (!text) {
-      if (wasListening) setStatus("No speech captured");
+      if (shouldRestart) restartIfNeeded();
+      else if (wasListening) setStatus("No speech captured");
       return;
     }
     addMessage("user", text);
@@ -311,12 +338,12 @@ function buildSpeechRecognition() {
     callGitHubModel(text)
       .then((reply) => {
         addMessage("assistant", reply);
-        speak(reply);
-        setStatus("Idle");
+        speak(reply, restartIfNeeded);
       })
       .catch((error) => {
         addMessage("system", error.message);
         setStatus("Error");
+        restartIfNeeded();
       });
   };
   return rec;
@@ -331,8 +358,7 @@ async function callGitHubModel(userText) {
   });
 
   messages.push({ role: "user", content: userText });
-  let lastRequestError;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const makeRequest = async () => {
     const response = await fetch(GITHUB_MODELS_ENDPOINT, {
       method: "POST",
       headers: {
@@ -346,38 +372,50 @@ async function callGitHubModel(userText) {
         max_tokens: MODEL_MAX_TOKENS
       })
     });
-
     if (!response.ok) {
       const errText = await response.text();
-      lastRequestError = new Error(`GitHub Models request failed (${response.status}): ${errText}`);
-      const shouldRetryWithFreshModelList = response.status === 400
-        && errText.includes("unknown_model")
-        && attempt === 0;
-      if (shouldRetryWithFreshModelList) {
-        await refreshAvailableModels({ force: true, throwOnError: true });
-        continue;
-      }
-      throw lastRequestError;
+      throw new Error(`GitHub Models request failed (${response.status}): ${errText}`);
     }
+    return response.json();
+  };
 
-    const data = await response.json();
+  try {
+    const data = await makeRequest();
+    const content = data?.choices?.[0]?.message?.content;
+    const assistantText = typeof content === "string" ? content.trim() : "";
+    if (!assistantText) throw new Error("Model returned empty response.");
+    messages.push({ role: "assistant", content: assistantText });
+    return assistantText;
+  } catch (error) {
+    if (!String(error?.message || "").includes("unknown_model")) throw error;
+    await refreshAvailableModels({ force: true, throwOnError: true });
+    const data = await makeRequest();
     const content = data?.choices?.[0]?.message?.content;
     const assistantText = typeof content === "string" ? content.trim() : "";
     if (!assistantText) throw new Error("Model returned empty response.");
     messages.push({ role: "assistant", content: assistantText });
     return assistantText;
   }
-  throw lastRequestError || new Error("GitHub Models request failed.");
 }
 
-function speak(text) {
-  if (!("speechSynthesis" in window)) return;
+function speak(text, onComplete) {
+  if (!("speechSynthesis" in window)) {
+    if (typeof onComplete === "function") onComplete();
+    return;
+  }
   // Cancel any pending or active speech before queuing a new utterance.
   // Without this, iOS loops the speech indefinitely due to a known browser bug.
   speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.onstart = () => setStatus("Speaking");
-  utterance.onend = () => setStatus("Idle");
+  utterance.onend = () => {
+    setStatus("Idle");
+    if (typeof onComplete === "function") onComplete();
+  };
+  utterance.onerror = () => {
+    setStatus("Idle");
+    if (typeof onComplete === "function") onComplete();
+  };
   speechSynthesis.speak(utterance);
 }
 
@@ -491,47 +529,73 @@ async function refreshAvailableModels({ force = false, throwOnError = false } = 
   }
 }
 
-async function beginTalk() {
+function setListeningButtonState() {
+  pttBtn.classList.toggle("active", shouldKeepListening);
+  pttBtn.textContent = shouldKeepListening ? "Stop Listening" : "Start Listening";
+  pttBtn.setAttribute("aria-pressed", String(shouldKeepListening));
+}
+
+async function startListening() {
   // On iOS Safari, webkitSpeechRecognition.start() only works after microphone
   // permission has been explicitly granted via getUserMedia.  Awaiting
   // initAudioDevices() here is safe because iOS Safari 14.5+ preserves the
   // user-activation flag across awaits of media-permission APIs, meaning
   // start() called right after the await is still considered within the gesture.
+  shouldKeepListening = true;
+  setListeningButtonState();
+  clearTimeout(recognitionRestartTimer);
   if (!mediaStream) {
     await initAudioDevices();
     // If the mic was denied or unavailable, initAudioDevices sets the status
     // and logs the error; bail out so we don't start recognition without a mic.
-    if (!mediaStream) return;
+    if (!mediaStream) {
+      shouldKeepListening = false;
+      setListeningButtonState();
+      return;
+    }
   }
   if (!speechRecognition) speechRecognition = buildSpeechRecognition();
   if (!speechRecognition) {
     addMessage("system", "SpeechRecognition is unsupported in this browser.");
+    shouldKeepListening = false;
+    setListeningButtonState();
     return;
   }
+  if (isListening) return;
   finalTranscript = "";
   interimTranscript = "";
   transcriptEl.textContent = "Listening…";
-  pttBtn.classList.add("active");
   setStatus("Listening");
   isListening = true;
   try {
     speechRecognition.start();
   } catch (err) {
+    shouldKeepListening = false;
+    setListeningButtonState();
+    isListening = false;
     addMessage("system", `Could not start recognition: ${err.message}`);
   }
 }
 
-function endTalk() {
-  pttBtn.classList.remove("active");
-  if (speechRecognition) {
+function stopListening() {
+  shouldKeepListening = false;
+  setListeningButtonState();
+  clearTimeout(recognitionRestartTimer);
+  if (speechRecognition && isListening) {
     try {
       speechRecognition.stop();
+      setStatus("Stopping…");
     } catch (err) {
       // Recognition may have already stopped (e.g. timed out); ignore.
     }
+  } else {
+    setStatus("Idle");
   }
-  // Transcript processing has moved to the speechRecognition.onend handler so
-  // that we wait for the browser to deliver all final results before reading them.
+}
+
+function toggleListening() {
+  if (shouldKeepListening) stopListening();
+  else startListening();
 }
 
 if ("PointerEvent" in window) {
@@ -562,19 +626,7 @@ patEl.addEventListener("blur", () => {
   refreshAvailableModels({ force: true });
 });
 
-pttBtn.addEventListener("mousedown", beginTalk);
-pttBtn.addEventListener("mouseup", endTalk);
-pttBtn.addEventListener("mouseleave", () => {
-  if (pttBtn.classList.contains("active")) endTalk();
-});
-pttBtn.addEventListener("touchstart", (e) => {
-  e.preventDefault();
-  beginTalk(); // async — intentionally not awaited; touchstart cannot be async itself
-}, { passive: false });
-pttBtn.addEventListener("touchend", (e) => {
-  e.preventDefault();
-  endTalk();
-}, { passive: false });
+pttBtn.addEventListener("click", toggleListening);
 
 const savedPat = sessionStorage.getItem("jarvis_pat");
 if (savedPat) {
@@ -584,4 +636,5 @@ if (savedPat) {
 }
 
 updateSpeakerTestButton();
+setListeningButtonState();
 drawIdle();

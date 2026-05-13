@@ -10,4 +10,4 @@ Static GitHub Pages AI voice assistant inspired by Jarvis.
    Then select a model.
    - Optional PAT memory is session-only (current tab), not persisted across browser restarts.
 4. Click **Test Microphone** to grant microphone access and load speaker devices.
-5. Hold **Push to Talk** to speak, then release to send.
+5. Click **Start Listening** to keep the mic listening continuously, then click **Stop Listening** when done.
