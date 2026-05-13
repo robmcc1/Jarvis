@@ -160,6 +160,9 @@ async function testSpeaker() {
     oscillator.connect(gain).connect(oscCtx.destination);
     oscillator.start();
     oscillator.stop(oscCtx.currentTime + 0.25);
+    oscillator.onended = () => {
+      oscCtx.close();
+    };
     setStatus("Speaker test played");
   } catch (error) {
     addMessage("system", `Speaker test failed: ${error.message}`);
@@ -225,8 +228,6 @@ async function callGitHubModel(userText) {
 function speak(text) {
   if (!("speechSynthesis" in window)) return;
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 1;
-  utterance.pitch = 1;
   utterance.onstart = () => setStatus("Speaking");
   utterance.onend = () => setStatus("Idle");
   speechSynthesis.speak(utterance);
@@ -234,9 +235,9 @@ function speak(text) {
 
 function savePatIfNeeded() {
   if (rememberPatEl.checked && patEl.value) {
-    localStorage.setItem("jarvis_pat", patEl.value);
+    sessionStorage.setItem("jarvis_pat", patEl.value);
   } else {
-    localStorage.removeItem("jarvis_pat");
+    sessionStorage.removeItem("jarvis_pat");
   }
 }
 
@@ -296,7 +297,7 @@ pttBtn.addEventListener("touchend", (e) => {
   endTalk();
 }, { passive: false });
 
-const savedPat = localStorage.getItem("jarvis_pat");
+const savedPat = sessionStorage.getItem("jarvis_pat");
 if (savedPat) {
   rememberPatEl.checked = true;
   patEl.value = savedPat;
