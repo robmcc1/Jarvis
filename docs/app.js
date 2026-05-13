@@ -39,8 +39,6 @@ let toneDestination;
 let testToneOscillator;
 let testToneGain;
 let isListening = false;
-let shouldKeepListening = false;
-let recognitionRestartTimer;
 let isSpeakerTestActive = false;
 let isInitializingDevices = false;
 let isLoadingModels = false;
@@ -293,11 +291,8 @@ function buildSpeechRecognition() {
   };
   rec.onerror = (event) => {
     isListening = false;
-    const shouldSuppressError = event.error === "aborted" && !shouldKeepListening;
-    if (!shouldSuppressError) {
-      addMessage("system", `Speech recognition error: ${event.error}`);
-      setStatus("Error");
-    }
+    addMessage("system", `Speech recognition error: ${event.error}`);
+    setStatus("Error");
   };
   // Process the captured transcript only after recognition fully stops.
   // Reading transcripts immediately after stop() is a race condition on mobile —
@@ -305,31 +300,12 @@ function buildSpeechRecognition() {
   rec.onend = () => {
     const wasListening = isListening;
     isListening = false;
-    const shouldRestart = shouldKeepListening;
     const text = `${finalTranscript}${interimTranscript}`.trim();
     finalTranscript = "";
     interimTranscript = "";
     transcriptEl.textContent = "—";
-
-    const restartIfNeeded = () => {
-      if (!shouldRestart) return;
-      clearTimeout(recognitionRestartTimer);
-      recognitionRestartTimer = setTimeout(() => {
-        if (!shouldKeepListening || !speechRecognition || isListening) return;
-        try {
-          speechRecognition.start();
-          isListening = true;
-          setStatus("Listening");
-        } catch (error) {
-          addMessage("system", `Could not restart recognition: ${error.message}`);
-          setStatus("Error");
-        }
-      }, 150);
-    };
-
     if (!text) {
-      if (shouldRestart) restartIfNeeded();
-      else if (wasListening) setStatus("No speech captured");
+      if (wasListening) setStatus("No speech captured");
       return;
     }
     addMessage("user", text);
@@ -338,12 +314,11 @@ function buildSpeechRecognition() {
     callGitHubModel(text)
       .then((reply) => {
         addMessage("assistant", reply);
-        speak(reply, restartIfNeeded);
+        speak(reply);
       })
       .catch((error) => {
         addMessage("system", error.message);
         setStatus("Error");
-        restartIfNeeded();
       });
   };
   return rec;
@@ -541,36 +516,21 @@ async function refreshAvailableModels({ force = false, throwOnError = false } = 
   }
 }
 
-function setListeningButtonState() {
-  pttBtn.classList.toggle("active", shouldKeepListening);
-  pttBtn.textContent = shouldKeepListening ? "Stop Listening" : "Start Listening";
-  pttBtn.setAttribute("aria-pressed", String(shouldKeepListening));
-}
-
-async function startListening() {
+async function beginTalk() {
   // On iOS Safari, webkitSpeechRecognition.start() only works after microphone
   // permission has been explicitly granted via getUserMedia.  Awaiting
   // initAudioDevices() here is safe because iOS Safari 14.5+ preserves the
   // user-activation flag across awaits of media-permission APIs, meaning
   // start() called right after the await is still considered within the gesture.
-  shouldKeepListening = true;
-  setListeningButtonState();
-  clearTimeout(recognitionRestartTimer);
   if (!mediaStream) {
     await initAudioDevices();
     // If the mic was denied or unavailable, initAudioDevices sets the status
     // and logs the error; bail out so we don't start recognition without a mic.
-    if (!mediaStream) {
-      shouldKeepListening = false;
-      setListeningButtonState();
-      return;
-    }
+    if (!mediaStream) return;
   }
   if (!speechRecognition) speechRecognition = buildSpeechRecognition();
   if (!speechRecognition) {
     addMessage("system", "SpeechRecognition is unsupported in this browser.");
-    shouldKeepListening = false;
-    setListeningButtonState();
     return;
   }
   if (isListening) return;
@@ -582,32 +542,22 @@ async function startListening() {
   try {
     speechRecognition.start();
   } catch (err) {
-    shouldKeepListening = false;
-    setListeningButtonState();
     isListening = false;
     addMessage("system", `Could not start recognition: ${err.message}`);
   }
 }
 
-function stopListening() {
-  shouldKeepListening = false;
-  setListeningButtonState();
-  clearTimeout(recognitionRestartTimer);
+function endTalk() {
+  pttBtn.classList.remove("active");
   if (speechRecognition && isListening) {
     try {
       speechRecognition.stop();
-      setStatus("Stopping…");
     } catch (err) {
       // Recognition may have already stopped (e.g. timed out); ignore.
     }
   } else {
     setStatus("Idle");
   }
-}
-
-function toggleListening() {
-  if (shouldKeepListening) stopListening();
-  else startListening();
 }
 
 if ("PointerEvent" in window) {
@@ -638,7 +588,49 @@ patEl.addEventListener("blur", () => {
   refreshAvailableModels({ force: true });
 });
 
-pttBtn.addEventListener("click", toggleListening);
+if ("PointerEvent" in window) {
+  pttBtn.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    pttBtn.classList.add("active");
+    beginTalk();
+  });
+  pttBtn.addEventListener("pointerup", endTalk);
+  pttBtn.addEventListener("pointercancel", endTalk);
+  pttBtn.addEventListener("pointerleave", () => {
+    if (pttBtn.classList.contains("active")) endTalk();
+  });
+} else {
+  pttBtn.addEventListener("mousedown", () => {
+    pttBtn.classList.add("active");
+    beginTalk();
+  });
+  pttBtn.addEventListener("mouseup", endTalk);
+  pttBtn.addEventListener("mouseleave", () => {
+    if (pttBtn.classList.contains("active")) endTalk();
+  });
+  pttBtn.addEventListener("touchstart", (event) => {
+    event.preventDefault();
+    pttBtn.classList.add("active");
+    beginTalk();
+  }, { passive: false });
+  pttBtn.addEventListener("touchend", (event) => {
+    event.preventDefault();
+    endTalk();
+  }, { passive: false });
+}
+pttBtn.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  if (!pttBtn.classList.contains("active")) {
+    pttBtn.classList.add("active");
+    beginTalk();
+  }
+});
+pttBtn.addEventListener("keyup", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  if (pttBtn.classList.contains("active")) endTalk();
+});
 
 const savedPat = sessionStorage.getItem("jarvis_pat");
 if (savedPat) {
@@ -648,5 +640,4 @@ if (savedPat) {
 }
 
 updateSpeakerTestButton();
-setListeningButtonState();
 drawIdle();
