@@ -42,6 +42,7 @@ let isSpeakerTestActive = false;
 let isInitializingDevices = false;
 let isLoadingModels = false;
 let lastLoadedModelsToken = "";
+let lastModelLoadError = "";
 
 function createAudioContext() {
   const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
@@ -428,7 +429,13 @@ async function refreshAvailableModels({ force = false } = {}) {
 
     setModelOptions(availableModels, modelEl.value);
     lastLoadedModelsToken = token;
+    lastModelLoadError = "";
   } catch (error) {
+    const modelLoadMessage = `Model list refresh failed. ${error.message}`;
+    if (modelLoadMessage !== lastModelLoadError) {
+      addMessage("system", modelLoadMessage);
+      lastModelLoadError = modelLoadMessage;
+    }
     console.debug("Model list refresh failed:", error);
   } finally {
     isLoadingModels = false;
