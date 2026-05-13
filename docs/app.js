@@ -172,12 +172,13 @@ async function testSpeaker() {
     await ensureToneOutput();
     const oscillator = testToneContext.createOscillator();
     const gain = testToneContext.createGain();
+    const toneSeconds = 0.25;
     gain.gain.value = 0.05;
     oscillator.type = "sine";
     oscillator.frequency.value = 880;
     oscillator.connect(gain).connect(toneDestination);
     oscillator.start();
-    oscillator.stop(testToneContext.currentTime + 0.25);
+    oscillator.stop(testToneContext.currentTime + toneSeconds);
     setTimeout(() => {
       try {
         oscillator.disconnect();
@@ -185,7 +186,7 @@ async function testSpeaker() {
       } catch {
         // no-op
       }
-    }, 500);
+    }, (toneSeconds + 0.25) * 1000);
     setStatus("Speaker test played");
   } catch (error) {
     addMessage("system", `Speaker test failed: ${error.message}`);
@@ -240,9 +241,7 @@ async function callGitHubModel(userText) {
 
   const data = await response.json();
   const content = data?.choices?.[0]?.message?.content;
-  const assistantText = Array.isArray(content)
-    ? content.map((c) => c?.text || "").join(" ").trim()
-    : `${content || ""}`.trim();
+  const assistantText = typeof content === "string" ? content.trim() : "";
   if (!assistantText) throw new Error("Model returned empty response.");
   messages.push({ role: "assistant", content: assistantText });
   return assistantText;
