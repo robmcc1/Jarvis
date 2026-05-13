@@ -17,6 +17,8 @@ const TEST_TONE_GAIN = 0.05;
 const TEST_TONE_FREQUENCY = 880;
 const TEST_TONE_SECONDS = 0.25;
 const TEST_TONE_BUFFER_SECONDS = 0.25;
+const MODEL_TEMPERATURE = 0.4;
+const MODEL_MAX_TOKENS = 500;
 let messages = [{ role: "system", content: "You are Jarvis: concise, capable, and helpful." }];
 
 let mediaStream;
@@ -233,8 +235,8 @@ async function callGitHubModel(userText) {
     body: JSON.stringify({
       model: modelEl.value,
       messages,
-      temperature: 0.4,
-      max_tokens: 500
+      temperature: MODEL_TEMPERATURE,
+      max_tokens: MODEL_MAX_TOKENS
     })
   });
 
