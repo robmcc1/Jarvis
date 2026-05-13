@@ -15,8 +15,6 @@ const ctx = canvas.getContext("2d");
 const GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com/chat/completions";
 const TEST_TONE_GAIN = 0.05;
 const TEST_TONE_FREQUENCY = 880;
-const TEST_TONE_SECONDS = 0.25;
-const TEST_TONE_BUFFER_SECONDS = 0.25;
 const MODEL_TEMPERATURE = 0.4;
 const MODEL_MAX_TOKENS = 500;
 let messages = [{ role: "system", content: "You are Jarvis: concise, capable, and helpful." }];
@@ -30,7 +28,19 @@ let interimTranscript = "";
 let finalTranscript = "";
 let testToneContext;
 let toneDestination;
+let testToneOscillator;
+let testToneGain;
 let isListening = false;
+let isSpeakerTestActive = false;
+let isInitializingDevices = false;
+
+function createAudioContext() {
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextConstructor) {
+    throw new Error("Audio output is not supported in this browser.");
+  }
+  return new AudioContextConstructor();
+}
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -115,15 +125,22 @@ function drawVisualizer() {
 }
 
 async function initAudioDevices() {
+  if (isInitializingDevices) return;
+  isInitializingDevices = true;
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error("Microphone API not available (browser may not support it, or page must be served over HTTPS).");
+    }
+    if (mediaStream) {
+      await loadOutputDevices();
+      setStatus("Microphone ready");
+      return;
     }
     // Create AudioContext synchronously within the user-gesture context, before
     // any await.  iOS Safari drops the user-gesture flag after the first async
     // suspension point and will refuse to create an AudioContext afterwards.
     if (!audioContext) {
-      audioContext = new AudioContext();
+      audioContext = createAudioContext();
     }
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     if (audioContext.state === "suspended") {
@@ -147,6 +164,8 @@ async function initAudioDevices() {
     }
     addMessage("system", `Microphone unavailable: ${message}`);
     setStatus("Mic unavailable");
+  } finally {
+    isInitializingDevices = false;
   }
 }
 
@@ -178,7 +197,7 @@ async function setAudioOutputDevice() {
 
 async function ensureToneOutput() {
   if (!testToneContext) {
-    testToneContext = new AudioContext();
+    testToneContext = createAudioContext();
     toneDestination = testToneContext.createMediaStreamDestination();
     audioOut.srcObject = toneDestination.stream;
   }
@@ -193,31 +212,52 @@ async function ensureToneOutput() {
   }
 }
 
+function updateSpeakerTestButton() {
+  speakTestBtn.textContent = isSpeakerTestActive ? "Stop Speaker Test" : "Test Speaker";
+  speakTestBtn.setAttribute("aria-pressed", String(isSpeakerTestActive));
+}
+
+async function stopSpeakerTest() {
+  if (!isSpeakerTestActive) return;
+  isSpeakerTestActive = false;
+  updateSpeakerTestButton();
+  try {
+    if (testToneOscillator) {
+      testToneOscillator.stop();
+      testToneOscillator.disconnect();
+      testToneOscillator = undefined;
+    }
+    if (testToneGain) {
+      testToneGain.disconnect();
+      testToneGain = undefined;
+    }
+    audioOut.pause();
+    setStatus("Speaker test stopped");
+  } catch (error) {
+    console.debug("Speaker test stop skipped:", error);
+  }
+}
+
 async function testSpeaker() {
   try {
+    if (isSpeakerTestActive) {
+      await stopSpeakerTest();
+      return;
+    }
     await setAudioOutputDevice();
     await ensureToneOutput();
-    const oscillator = testToneContext.createOscillator();
-    const gain = testToneContext.createGain();
-    gain.gain.value = TEST_TONE_GAIN;
-    oscillator.type = "sine";
-    oscillator.frequency.value = TEST_TONE_FREQUENCY;
-    oscillator.connect(gain).connect(toneDestination);
-    oscillator.start();
-    oscillator.stop(testToneContext.currentTime + TEST_TONE_SECONDS);
-    setTimeout(() => {
-      try {
-        oscillator.disconnect();
-        gain.disconnect();
-        // Pause the audio element so it stops playing the silent MediaStream
-        // after the tone finishes — otherwise it plays (silently) indefinitely.
-        audioOut.pause();
-      } catch (error) {
-        console.debug("Test tone cleanup skipped:", error);
-      }
-    }, (TEST_TONE_SECONDS + TEST_TONE_BUFFER_SECONDS) * 1000);
-    setStatus("Speaker test played");
+    testToneOscillator = testToneContext.createOscillator();
+    testToneGain = testToneContext.createGain();
+    testToneGain.gain.value = TEST_TONE_GAIN;
+    testToneOscillator.type = "sine";
+    testToneOscillator.frequency.value = TEST_TONE_FREQUENCY;
+    testToneOscillator.connect(testToneGain).connect(toneDestination);
+    testToneOscillator.start();
+    isSpeakerTestActive = true;
+    updateSpeakerTestButton();
+    setStatus("Speaker test playing");
   } catch (error) {
+    await stopSpeakerTest();
     addMessage("system", `Speaker test failed: ${error.message}`);
   }
 }
@@ -365,7 +405,23 @@ function endTalk() {
   // that we wait for the browser to deliver all final results before reading them.
 }
 
-enableBtn.addEventListener("click", initAudioDevices);
+if ("PointerEvent" in window) {
+  enableBtn.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    initAudioDevices();
+  });
+} else {
+  enableBtn.addEventListener("click", initAudioDevices);
+  enableBtn.addEventListener("touchstart", (event) => {
+    event.preventDefault();
+    initAudioDevices();
+  }, { passive: false });
+}
+enableBtn.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  initAudioDevices();
+});
 speakTestBtn.addEventListener("click", testSpeaker);
 speakerSelectEl.addEventListener("change", setAudioOutputDevice);
 rememberPatEl.addEventListener("change", savePatIfNeeded);
@@ -390,4 +446,5 @@ if (savedPat) {
   patEl.value = savedPat;
 }
 
+updateSpeakerTestButton();
 drawIdle();
