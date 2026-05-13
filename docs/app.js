@@ -116,8 +116,19 @@ function drawVisualizer() {
 
 async function initAudioDevices() {
   try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("Microphone not supported in this browser (page must be served over HTTPS).");
+    }
+    // Create AudioContext synchronously within the user-gesture context, before
+    // any await.  iOS Safari drops the user-gesture flag after the first async
+    // suspension point and will refuse to create an AudioContext afterwards.
+    if (!audioContext) {
+      audioContext = new AudioContext();
+    }
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioContext = new AudioContext();
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
+    }
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
     const source = audioContext.createMediaStreamSource(mediaStream);
@@ -126,7 +137,15 @@ async function initAudioDevices() {
     await loadOutputDevices();
     setStatus("Microphone ready");
   } catch (error) {
-    addMessage("system", `Microphone access denied or unavailable: ${error.message}`);
+    let message = error.message;
+    if (error.name === "NotAllowedError") {
+      message = "Microphone permission denied. Please allow access in your browser settings.";
+    } else if (error.name === "NotFoundError") {
+      message = "No microphone found on this device.";
+    } else if (error.name === "NotSupportedError") {
+      message = "Microphone not supported. Page must be served over HTTPS.";
+    }
+    addMessage("system", `Microphone unavailable: ${message}`);
     setStatus("Mic unavailable");
   }
 }
@@ -190,6 +209,9 @@ async function testSpeaker() {
       try {
         oscillator.disconnect();
         gain.disconnect();
+        // Pause the audio element so it stops playing the silent MediaStream
+        // after the tone finishes — otherwise it plays (silently) indefinitely.
+        audioOut.pause();
       } catch (error) {
         console.debug("Test tone cleanup skipped:", error);
       }
