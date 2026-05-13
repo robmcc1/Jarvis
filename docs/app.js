@@ -117,7 +117,7 @@ function drawVisualizer() {
 async function initAudioDevices() {
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      throw new Error("Microphone not supported in this browser (page must be served over HTTPS).");
+      throw new Error("Microphone API not available (browser may not support it, or page must be served over HTTPS).");
     }
     // Create AudioContext synchronously within the user-gesture context, before
     // any await.  iOS Safari drops the user-gesture flag after the first async
@@ -143,7 +143,7 @@ async function initAudioDevices() {
     } else if (error.name === "NotFoundError") {
       message = "No microphone found on this device.";
     } else if (error.name === "NotSupportedError") {
-      message = "Microphone not supported. Page must be served over HTTPS.";
+      message = "Microphone not supported or incompatible settings.";
     }
     addMessage("system", `Microphone unavailable: ${message}`);
     setStatus("Mic unavailable");
@@ -322,11 +322,18 @@ function savePatIfNeeded() {
   }
 }
 
-function beginTalk() {
-  // Do NOT await initAudioDevices here — awaiting before speechRecognition.start()
-  // breaks the iOS requirement that start() must be called synchronously within a
-  // user-gesture handler. initAudioDevices is only needed for the visualizer.
-  if (!mediaStream) initAudioDevices();
+async function beginTalk() {
+  // On iOS Safari, webkitSpeechRecognition.start() only works after microphone
+  // permission has been explicitly granted via getUserMedia.  Awaiting
+  // initAudioDevices() here is safe because iOS Safari 14.5+ preserves the
+  // user-activation flag across awaits of media-permission APIs, meaning
+  // start() called right after the await is still considered within the gesture.
+  if (!mediaStream) {
+    await initAudioDevices();
+    // If the mic was denied or unavailable, initAudioDevices sets the status
+    // and logs the error; bail out so we don't start recognition without a mic.
+    if (!mediaStream) return;
+  }
   if (!speechRecognition) speechRecognition = buildSpeechRecognition();
   if (!speechRecognition) {
     addMessage("system", "SpeechRecognition is unsupported in this browser.");
@@ -370,7 +377,7 @@ pttBtn.addEventListener("mouseleave", () => {
 });
 pttBtn.addEventListener("touchstart", (e) => {
   e.preventDefault();
-  beginTalk();
+  beginTalk(); // async — intentionally not awaited; touchstart cannot be async itself
 }, { passive: false });
 pttBtn.addEventListener("touchend", (e) => {
   e.preventDefault();
