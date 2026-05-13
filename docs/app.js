@@ -407,7 +407,7 @@ function endTalk() {
 
 if ("PointerEvent" in window) {
   enableBtn.addEventListener("pointerdown", (event) => {
-    if (event.pointerType === "touch") event.preventDefault();
+    event.preventDefault();
     initAudioDevices();
   });
 } else {
