@@ -13,6 +13,10 @@ const canvas = document.getElementById("visualizer");
 const ctx = canvas.getContext("2d");
 
 const GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com/chat/completions";
+const TEST_TONE_GAIN = 0.05;
+const TEST_TONE_FREQUENCY = 880;
+const TEST_TONE_SECONDS = 0.25;
+const TEST_TONE_BUFFER_SECONDS = 0.25;
 const messages = [{ role: "system", content: "You are Jarvis: concise, capable, and helpful." }];
 
 let mediaStream;
@@ -172,13 +176,12 @@ async function testSpeaker() {
     await ensureToneOutput();
     const oscillator = testToneContext.createOscillator();
     const gain = testToneContext.createGain();
-    const toneSeconds = 0.25;
-    gain.gain.value = 0.05;
+    gain.gain.value = TEST_TONE_GAIN;
     oscillator.type = "sine";
-    oscillator.frequency.value = 880;
+    oscillator.frequency.value = TEST_TONE_FREQUENCY;
     oscillator.connect(gain).connect(toneDestination);
     oscillator.start();
-    oscillator.stop(testToneContext.currentTime + toneSeconds);
+    oscillator.stop(testToneContext.currentTime + TEST_TONE_SECONDS);
     setTimeout(() => {
       try {
         oscillator.disconnect();
@@ -186,7 +189,7 @@ async function testSpeaker() {
       } catch {
         // no-op
       }
-    }, (toneSeconds + 0.25) * 1000);
+    }, (TEST_TONE_SECONDS + TEST_TONE_BUFFER_SECONDS) * 1000);
     setStatus("Speaker test played");
   } catch (error) {
     addMessage("system", `Speaker test failed: ${error.message}`);
