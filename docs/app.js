@@ -17,7 +17,7 @@ const TEST_TONE_GAIN = 0.05;
 const TEST_TONE_FREQUENCY = 880;
 const TEST_TONE_SECONDS = 0.25;
 const TEST_TONE_BUFFER_SECONDS = 0.25;
-const messages = [{ role: "system", content: "You are Jarvis: concise, capable, and helpful." }];
+let messages = [{ role: "system", content: "You are Jarvis: concise, capable, and helpful." }];
 
 let mediaStream;
 let audioContext;
@@ -165,8 +165,9 @@ async function ensureToneOutput() {
   }
   try {
     await audioOut.play();
-  } catch {
+  } catch (error) {
     // User gesture is required in some browsers; click event usually satisfies this.
+    console.debug("Audio output play() not ready yet:", error);
   }
 }
 
@@ -186,8 +187,8 @@ async function testSpeaker() {
       try {
         oscillator.disconnect();
         gain.disconnect();
-      } catch {
-        // no-op
+      } catch (error) {
+        console.debug("Test tone cleanup skipped:", error);
       }
     }, (TEST_TONE_SECONDS + TEST_TONE_BUFFER_SECONDS) * 1000);
     setStatus("Speaker test played");
