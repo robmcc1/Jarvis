@@ -416,9 +416,8 @@ async function refreshAvailableModels({ force = false } = {}) {
     }
 
     const data = await response.json();
-    const availableModels = Array.isArray(data?.data)
-      ? data.data.map((model) => model?.id).filter(Boolean)
-      : [];
+    const modelEntries = Array.isArray(data?.data) ? data.data : [];
+    const availableModels = modelEntries.map((model) => model?.id).filter(Boolean);
 
     if (!availableModels.length) {
       throw new Error("No models were returned for this token.");
