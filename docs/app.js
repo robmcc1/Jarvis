@@ -255,6 +255,10 @@ async function testSpeaker() {
     testToneOscillator.onended = () => {
       testToneOscillator = undefined;
       testToneGain = undefined;
+      if (isSpeakerTestActive) {
+        isSpeakerTestActive = false;
+        updateSpeakerTestButton();
+      }
     };
     testToneOscillator.start();
     isSpeakerTestActive = true;
@@ -410,7 +414,7 @@ function endTalk() {
 }
 
 enableBtn.addEventListener("click", initAudioDevices);
-enableBtn.addEventListener("touchend", (event) => {
+enableBtn.addEventListener("touchstart", (event) => {
   event.preventDefault();
   initAudioDevices();
 }, { passive: false });
