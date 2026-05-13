@@ -19,7 +19,7 @@ const TEST_TONE_FREQUENCY = 880;
 const MODEL_TEMPERATURE = 0.4;
 const MODEL_MAX_TOKENS = 500;
 const DEFAULT_MODELS = [
-  "openai/gpt-4o-mini",
+  "openai/gpt-4.1-mini",
   "openai/gpt-4.1",
   "meta/Llama-3.3-70B-Instruct",
   "mistral-ai/Mistral-Large-2411"
@@ -324,33 +324,47 @@ function buildSpeechRecognition() {
 async function callGitHubModel(userText) {
   const token = patEl.value.trim();
   if (!token) throw new Error("PAT is required.");
-
-  messages.push({ role: "user", content: userText });
-  const response = await fetch(GITHUB_MODELS_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify({
-      model: modelEl.value,
-      messages,
-      temperature: MODEL_TEMPERATURE,
-      max_tokens: MODEL_MAX_TOKENS
-    })
+  await refreshAvailableModels({
+    force: token !== lastLoadedModelsToken,
+    throwOnError: true
   });
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`GitHub Models request failed (${response.status}): ${errText}`);
-  }
+  messages.push({ role: "user", content: userText });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await fetch(GITHUB_MODELS_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        model: modelEl.value,
+        messages,
+        temperature: MODEL_TEMPERATURE,
+        max_tokens: MODEL_MAX_TOKENS
+      })
+    });
 
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
-  const assistantText = typeof content === "string" ? content.trim() : "";
-  if (!assistantText) throw new Error("Model returned empty response.");
-  messages.push({ role: "assistant", content: assistantText });
-  return assistantText;
+    if (!response.ok) {
+      const errText = await response.text();
+      const shouldRetryWithFreshModelList = response.status === 400
+        && errText.includes("unknown_model")
+        && attempt === 0;
+      if (shouldRetryWithFreshModelList) {
+        await refreshAvailableModels({ force: true, throwOnError: true });
+        continue;
+      }
+      throw new Error(`GitHub Models request failed (${response.status}): ${errText}`);
+    }
+
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content;
+    const assistantText = typeof content === "string" ? content.trim() : "";
+    if (!assistantText) throw new Error("Model returned empty response.");
+    messages.push({ role: "assistant", content: assistantText });
+    return assistantText;
+  }
+  throw new Error("GitHub Models request failed after retrying with a refreshed model list.");
 }
 
 function speak(text) {
@@ -393,15 +407,15 @@ function setModelOptions(modelIds, preferredModel) {
   modelEl.value = selectedModel;
 }
 
-async function refreshAvailableModels({ force = false } = {}) {
+async function refreshAvailableModels({ force = false, throwOnError = false } = {}) {
   const token = patEl.value.trim();
   if (!token) {
     lastLoadedModelsToken = "";
     setModelOptions(DEFAULT_MODELS, modelEl.value);
-    return;
+    return false;
   }
-  if (!force && token === lastLoadedModelsToken) return;
-  if (isLoadingModels) return;
+  if (!force && token === lastLoadedModelsToken) return true;
+  if (isLoadingModels) return token === lastLoadedModelsToken;
 
   isLoadingModels = true;
   try {
@@ -420,8 +434,16 @@ async function refreshAvailableModels({ force = false } = {}) {
     }
 
     const data = await response.json();
-    const modelEntries = Array.isArray(data?.data) ? data.data : [];
-    const availableModels = modelEntries.map((model) => model?.id).filter(Boolean);
+    const modelEntries = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.models)
+          ? data.models
+          : [];
+    const availableModels = modelEntries
+      .map((model) => (typeof model === "string" ? model : model?.id || model?.name))
+      .filter(Boolean);
 
     if (!availableModels.length) {
       throw new Error("No models were returned for this token. Please verify your PAT has access to GitHub Models.");
@@ -430,6 +452,7 @@ async function refreshAvailableModels({ force = false } = {}) {
     setModelOptions(availableModels, modelEl.value);
     lastLoadedModelsToken = token;
     lastModelLoadError = "";
+    return true;
   } catch (error) {
     const modelLoadMessage = `Model list refresh failed. ${error.message}`;
     if (modelLoadMessage !== lastModelLoadError) {
@@ -437,6 +460,8 @@ async function refreshAvailableModels({ force = false } = {}) {
       lastModelLoadError = modelLoadMessage;
     }
     console.debug("Model list refresh failed:", error);
+    if (throwOnError) throw error;
+    return false;
   } finally {
     isLoadingModels = false;
   }
