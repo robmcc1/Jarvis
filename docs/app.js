@@ -293,8 +293,8 @@ function buildSpeechRecognition() {
   };
   rec.onerror = (event) => {
     isListening = false;
-    const stoppedByUser = event.error === "aborted" && !shouldKeepListening;
-    if (!stoppedByUser) {
+    const shouldSuppressError = event.error === "aborted" && !shouldKeepListening;
+    if (!shouldSuppressError) {
       addMessage("system", `Speech recognition error: ${event.error}`);
       setStatus("Error");
     }
@@ -374,7 +374,17 @@ async function callGitHubModel(userText) {
     });
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`GitHub Models request failed (${response.status}): ${errText}`);
+      let errorCode = "";
+      try {
+        const parsed = JSON.parse(errText);
+        errorCode = parsed?.error?.code || "";
+      } catch (parseError) {
+        // Ignore non-JSON error responses and fall back to text-based diagnostics.
+      }
+      const requestError = new Error(`GitHub Models request failed (${response.status}): ${errText}`);
+      requestError.code = errorCode;
+      requestError.status = response.status;
+      throw requestError;
     }
     return response.json();
   };
@@ -387,7 +397,9 @@ async function callGitHubModel(userText) {
     messages.push({ role: "assistant", content: assistantText });
     return assistantText;
   } catch (error) {
-    if (!String(error?.message || "").includes("unknown_model")) throw error;
+    const isUnknownModel = error?.code === "unknown_model"
+      || String(error?.message || "").includes("unknown_model");
+    if (!isUnknownModel) throw error;
     await refreshAvailableModels({ force: true, throwOnError: true });
     const data = await makeRequest();
     const content = data?.choices?.[0]?.message?.content;
