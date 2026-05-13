@@ -33,6 +33,7 @@ let testToneGain;
 let isListening = false;
 let isSpeakerTestActive = false;
 let isInitializingDevices = false;
+let ignoreNextEnableClick = false;
 
 function createAudioContext() {
   const Ctor = window.AudioContext || window.webkitAudioContext;
@@ -252,14 +253,6 @@ async function testSpeaker() {
     testToneOscillator.type = "sine";
     testToneOscillator.frequency.value = TEST_TONE_FREQUENCY;
     testToneOscillator.connect(testToneGain).connect(toneDestination);
-    testToneOscillator.onended = () => {
-      testToneOscillator = undefined;
-      testToneGain = undefined;
-      if (isSpeakerTestActive) {
-        isSpeakerTestActive = false;
-        updateSpeakerTestButton();
-      }
-    };
     testToneOscillator.start();
     isSpeakerTestActive = true;
     updateSpeakerTestButton();
@@ -413,9 +406,19 @@ function endTalk() {
   // that we wait for the browser to deliver all final results before reading them.
 }
 
-enableBtn.addEventListener("click", initAudioDevices);
+enableBtn.addEventListener("click", () => {
+  if (ignoreNextEnableClick) {
+    ignoreNextEnableClick = false;
+    return;
+  }
+  initAudioDevices();
+});
 enableBtn.addEventListener("pointerup", (event) => {
   if (event.pointerType !== "touch") return;
+  ignoreNextEnableClick = true;
+  setTimeout(() => {
+    ignoreNextEnableClick = false;
+  }, 500);
   event.preventDefault();
   initAudioDevices();
 });
