@@ -18,8 +18,9 @@ const TEST_TONE_GAIN = 0.05;
 const TEST_TONE_FREQUENCY = 880;
 const MODEL_TEMPERATURE = 0.4;
 const MODEL_MAX_TOKENS = 500;
+const MODEL_LOAD_WAIT_TIMEOUT_MS = 5000;
 const DEFAULT_MODELS = [
-  "openai/gpt-4o-mini",
+  "openai/gpt-4.1-mini",
   "openai/gpt-4.1",
   "meta/Llama-3.3-70B-Instruct",
   "mistral-ai/Mistral-Large-2411"
@@ -300,6 +301,9 @@ function buildSpeechRecognition() {
     const wasListening = isListening;
     isListening = false;
     const text = `${finalTranscript}${interimTranscript}`.trim();
+    finalTranscript = "";
+    interimTranscript = "";
+    transcriptEl.textContent = "—";
     if (!text) {
       if (wasListening) setStatus("No speech captured");
       return;
@@ -311,7 +315,6 @@ function buildSpeechRecognition() {
       .then((reply) => {
         addMessage("assistant", reply);
         speak(reply);
-        setStatus("Idle");
       })
       .catch((error) => {
         addMessage("system", error.message);
@@ -324,43 +327,82 @@ function buildSpeechRecognition() {
 async function callGitHubModel(userText) {
   const token = patEl.value.trim();
   if (!token) throw new Error("PAT is required.");
-
-  messages.push({ role: "user", content: userText });
-  const response = await fetch(GITHUB_MODELS_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify({
-      model: modelEl.value,
-      messages,
-      temperature: MODEL_TEMPERATURE,
-      max_tokens: MODEL_MAX_TOKENS
-    })
+  await refreshAvailableModels({
+    force: token !== lastLoadedModelsToken,
+    throwOnError: true
   });
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`GitHub Models request failed (${response.status}): ${errText}`);
-  }
+  messages.push({ role: "user", content: userText });
+  const makeRequest = async () => {
+    const response = await fetch(GITHUB_MODELS_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        model: modelEl.value,
+        messages,
+        temperature: MODEL_TEMPERATURE,
+        max_tokens: MODEL_MAX_TOKENS
+      })
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      let errorCode = "";
+      try {
+        const parsed = JSON.parse(errText);
+        errorCode = parsed?.error?.code || "";
+      } catch (parseError) {
+        // Ignore non-JSON error responses and fall back to text-based diagnostics.
+      }
+      const requestError = new Error(`GitHub Models request failed (${response.status}): ${errText}`);
+      requestError.code = errorCode;
+      requestError.status = response.status;
+      throw requestError;
+    }
+    return response.json();
+  };
 
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
-  const assistantText = typeof content === "string" ? content.trim() : "";
-  if (!assistantText) throw new Error("Model returned empty response.");
-  messages.push({ role: "assistant", content: assistantText });
-  return assistantText;
+  try {
+    const data = await makeRequest();
+    const content = data?.choices?.[0]?.message?.content;
+    const assistantText = typeof content === "string" ? content.trim() : "";
+    if (!assistantText) throw new Error("Model returned empty response.");
+    messages.push({ role: "assistant", content: assistantText });
+    return assistantText;
+  } catch (error) {
+    const isUnknownModel = error?.code === "unknown_model"
+      || String(error?.message || "").includes("unknown_model");
+    if (!isUnknownModel) throw error;
+    await refreshAvailableModels({ force: true, throwOnError: true });
+    const data = await makeRequest();
+    const content = data?.choices?.[0]?.message?.content;
+    const assistantText = typeof content === "string" ? content.trim() : "";
+    if (!assistantText) throw new Error("Model returned empty response.");
+    messages.push({ role: "assistant", content: assistantText });
+    return assistantText;
+  }
 }
 
-function speak(text) {
-  if (!("speechSynthesis" in window)) return;
+function speak(text, onComplete) {
+  if (!("speechSynthesis" in window)) {
+    if (typeof onComplete === "function") onComplete();
+    return;
+  }
   // Cancel any pending or active speech before queuing a new utterance.
   // Without this, iOS loops the speech indefinitely due to a known browser bug.
   speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.onstart = () => setStatus("Speaking");
-  utterance.onend = () => setStatus("Idle");
+  utterance.onend = () => {
+    setStatus("Idle");
+    if (typeof onComplete === "function") onComplete();
+  };
+  utterance.onerror = () => {
+    setStatus("Idle");
+    if (typeof onComplete === "function") onComplete();
+  };
   speechSynthesis.speak(utterance);
 }
 
@@ -393,15 +435,42 @@ function setModelOptions(modelIds, preferredModel) {
   modelEl.value = selectedModel;
 }
 
-async function refreshAvailableModels({ force = false } = {}) {
+function getModelEntriesFromResponse(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.models)) return data.models;
+  return [];
+}
+
+function getModelId(model) {
+  if (typeof model === "string") return model;
+  if (typeof model?.id === "string") return model.id;
+  if (typeof model?.name === "string") return model.name;
+  return "";
+}
+
+async function waitForModelLoadToFinish() {
+  const start = Date.now();
+  while (isLoadingModels) {
+    if (Date.now() - start >= MODEL_LOAD_WAIT_TIMEOUT_MS) {
+      throw new Error("Timed out waiting for model list refresh to finish.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function refreshAvailableModels({ force = false, throwOnError = false } = {}) {
   const token = patEl.value.trim();
   if (!token) {
     lastLoadedModelsToken = "";
     setModelOptions(DEFAULT_MODELS, modelEl.value);
-    return;
+    return false;
   }
-  if (!force && token === lastLoadedModelsToken) return;
-  if (isLoadingModels) return;
+  if (!force && token === lastLoadedModelsToken) return true;
+  if (isLoadingModels) {
+    await waitForModelLoadToFinish();
+    if (!force && token === lastLoadedModelsToken) return true;
+  }
 
   isLoadingModels = true;
   try {
@@ -420,8 +489,10 @@ async function refreshAvailableModels({ force = false } = {}) {
     }
 
     const data = await response.json();
-    const modelEntries = Array.isArray(data?.data) ? data.data : [];
-    const availableModels = modelEntries.map((model) => model?.id).filter(Boolean);
+    const modelEntries = getModelEntriesFromResponse(data);
+    const availableModels = modelEntries
+      .map(getModelId)
+      .filter(Boolean);
 
     if (!availableModels.length) {
       throw new Error("No models were returned for this token. Please verify your PAT has access to GitHub Models.");
@@ -430,6 +501,7 @@ async function refreshAvailableModels({ force = false } = {}) {
     setModelOptions(availableModels, modelEl.value);
     lastLoadedModelsToken = token;
     lastModelLoadError = "";
+    return true;
   } catch (error) {
     const modelLoadMessage = `Model list refresh failed. ${error.message}`;
     if (modelLoadMessage !== lastModelLoadError) {
@@ -437,6 +509,8 @@ async function refreshAvailableModels({ force = false } = {}) {
       lastModelLoadError = modelLoadMessage;
     }
     console.debug("Model list refresh failed:", error);
+    if (throwOnError) throw error;
+    return false;
   } finally {
     isLoadingModels = false;
   }
@@ -459,30 +533,31 @@ async function beginTalk() {
     addMessage("system", "SpeechRecognition is unsupported in this browser.");
     return;
   }
+  if (isListening) return;
   finalTranscript = "";
   interimTranscript = "";
   transcriptEl.textContent = "Listening…";
-  pttBtn.classList.add("active");
   setStatus("Listening");
   isListening = true;
   try {
     speechRecognition.start();
   } catch (err) {
+    isListening = false;
     addMessage("system", `Could not start recognition: ${err.message}`);
   }
 }
 
 function endTalk() {
   pttBtn.classList.remove("active");
-  if (speechRecognition) {
+  if (speechRecognition && isListening) {
     try {
       speechRecognition.stop();
     } catch (err) {
       // Recognition may have already stopped (e.g. timed out); ignore.
     }
+  } else {
+    setStatus("Idle");
   }
-  // Transcript processing has moved to the speechRecognition.onend handler so
-  // that we wait for the browser to deliver all final results before reading them.
 }
 
 if ("PointerEvent" in window) {
@@ -513,19 +588,49 @@ patEl.addEventListener("blur", () => {
   refreshAvailableModels({ force: true });
 });
 
-pttBtn.addEventListener("mousedown", beginTalk);
-pttBtn.addEventListener("mouseup", endTalk);
-pttBtn.addEventListener("mouseleave", () => {
+if ("PointerEvent" in window) {
+  pttBtn.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    pttBtn.classList.add("active");
+    beginTalk();
+  });
+  pttBtn.addEventListener("pointerup", endTalk);
+  pttBtn.addEventListener("pointercancel", endTalk);
+  pttBtn.addEventListener("pointerleave", () => {
+    if (pttBtn.classList.contains("active")) endTalk();
+  });
+} else {
+  pttBtn.addEventListener("mousedown", () => {
+    pttBtn.classList.add("active");
+    beginTalk();
+  });
+  pttBtn.addEventListener("mouseup", endTalk);
+  pttBtn.addEventListener("mouseleave", () => {
+    if (pttBtn.classList.contains("active")) endTalk();
+  });
+  pttBtn.addEventListener("touchstart", (event) => {
+    event.preventDefault();
+    pttBtn.classList.add("active");
+    beginTalk();
+  }, { passive: false });
+  pttBtn.addEventListener("touchend", (event) => {
+    event.preventDefault();
+    endTalk();
+  }, { passive: false });
+}
+pttBtn.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  if (!pttBtn.classList.contains("active")) {
+    pttBtn.classList.add("active");
+    beginTalk();
+  }
+});
+pttBtn.addEventListener("keyup", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
   if (pttBtn.classList.contains("active")) endTalk();
 });
-pttBtn.addEventListener("touchstart", (e) => {
-  e.preventDefault();
-  beginTalk(); // async — intentionally not awaited; touchstart cannot be async itself
-}, { passive: false });
-pttBtn.addEventListener("touchend", (e) => {
-  e.preventDefault();
-  endTalk();
-}, { passive: false });
 
 const savedPat = sessionStorage.getItem("jarvis_pat");
 if (savedPat) {
