@@ -13,10 +13,17 @@ const canvas = document.getElementById("visualizer");
 const ctx = canvas.getContext("2d");
 
 const GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com/chat/completions";
+const GITHUB_MODELS_LIST_ENDPOINT = "https://models.inference.ai.azure.com/models";
 const TEST_TONE_GAIN = 0.05;
 const TEST_TONE_FREQUENCY = 880;
 const MODEL_TEMPERATURE = 0.4;
 const MODEL_MAX_TOKENS = 500;
+const DEFAULT_MODELS = [
+  "openai/gpt-4o-mini",
+  "openai/gpt-4.1",
+  "meta/Llama-3.3-70B-Instruct",
+  "mistral-ai/Mistral-Large-2411"
+];
 let messages = [{ role: "system", content: "You are Jarvis: concise, capable, and helpful." }];
 
 let mediaStream;
@@ -33,6 +40,9 @@ let testToneGain;
 let isListening = false;
 let isSpeakerTestActive = false;
 let isInitializingDevices = false;
+let isLoadingModels = false;
+let lastLoadedModelsToken = "";
+let lastModelLoadError = "";
 
 function createAudioContext() {
   const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
@@ -362,6 +372,76 @@ function savePatIfNeeded() {
   }
 }
 
+function setModelOptions(modelIds, preferredModel) {
+  const uniqueModelIds = [...new Set(modelIds.filter((id) => typeof id === "string" && id.trim()))];
+  if (!uniqueModelIds.length) return;
+
+  const selectedModel = uniqueModelIds.includes(preferredModel)
+    ? preferredModel
+    : uniqueModelIds.includes(modelEl.value)
+      ? modelEl.value
+      : uniqueModelIds[0];
+
+  modelEl.innerHTML = "";
+  uniqueModelIds.forEach((id) => {
+    const option = document.createElement("option");
+    option.value = id;
+    option.textContent = id;
+    modelEl.appendChild(option);
+  });
+
+  modelEl.value = selectedModel;
+}
+
+async function refreshAvailableModels({ force = false } = {}) {
+  const token = patEl.value.trim();
+  if (!token) {
+    lastLoadedModelsToken = "";
+    setModelOptions(DEFAULT_MODELS, modelEl.value);
+    return;
+  }
+  if (!force && token === lastLoadedModelsToken) return;
+  if (isLoadingModels) return;
+
+  isLoadingModels = true;
+  try {
+    const response = await fetch(GITHUB_MODELS_LIST_ENDPOINT, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      const responsePreview = responseText ? responseText.slice(0, 200) : "";
+      const detail = responsePreview ? ` ${responsePreview}` : "";
+      throw new Error(`Failed to load models (${response.status}).${detail}`);
+    }
+
+    const data = await response.json();
+    const modelEntries = Array.isArray(data?.data) ? data.data : [];
+    const availableModels = modelEntries.map((model) => model?.id).filter(Boolean);
+
+    if (!availableModels.length) {
+      throw new Error("No models were returned for this token. Please verify your PAT has access to GitHub Models.");
+    }
+
+    setModelOptions(availableModels, modelEl.value);
+    lastLoadedModelsToken = token;
+    lastModelLoadError = "";
+  } catch (error) {
+    const modelLoadMessage = `Model list refresh failed. ${error.message}`;
+    if (modelLoadMessage !== lastModelLoadError) {
+      addMessage("system", modelLoadMessage);
+      lastModelLoadError = modelLoadMessage;
+    }
+    console.debug("Model list refresh failed:", error);
+  } finally {
+    isLoadingModels = false;
+  }
+}
+
 async function beginTalk() {
   // On iOS Safari, webkitSpeechRecognition.start() only works after microphone
   // permission has been explicitly granted via getUserMedia.  Awaiting
@@ -425,6 +505,13 @@ enableBtn.addEventListener("keydown", (event) => {
 speakTestBtn.addEventListener("click", testSpeaker);
 speakerSelectEl.addEventListener("change", setAudioOutputDevice);
 rememberPatEl.addEventListener("change", savePatIfNeeded);
+patEl.addEventListener("change", () => {
+  savePatIfNeeded();
+  refreshAvailableModels({ force: true });
+});
+patEl.addEventListener("blur", () => {
+  refreshAvailableModels({ force: true });
+});
 
 pttBtn.addEventListener("mousedown", beginTalk);
 pttBtn.addEventListener("mouseup", endTalk);
@@ -444,6 +531,7 @@ const savedPat = sessionStorage.getItem("jarvis_pat");
 if (savedPat) {
   rememberPatEl.checked = true;
   patEl.value = savedPat;
+  refreshAvailableModels({ force: true });
 }
 
 updateSpeakerTestButton();
