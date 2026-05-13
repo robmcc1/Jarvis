@@ -30,6 +30,7 @@ let interimTranscript = "";
 let finalTranscript = "";
 let testToneContext;
 let toneDestination;
+let isListening = false;
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -216,7 +217,34 @@ function buildSpeechRecognition() {
     transcriptEl.textContent = `${finalTranscript}${interimTranscript}`.trim() || "—";
   };
   rec.onerror = (event) => {
+    isListening = false;
     addMessage("system", `Speech recognition error: ${event.error}`);
+    setStatus("Error");
+  };
+  // Process the captured transcript only after recognition fully stops.
+  // Reading transcripts immediately after stop() is a race condition on mobile —
+  // the browser may not have delivered the final onresult event yet.
+  rec.onend = () => {
+    const wasListening = isListening;
+    isListening = false;
+    const text = `${finalTranscript}${interimTranscript}`.trim();
+    if (!text) {
+      if (wasListening) setStatus("No speech captured");
+      return;
+    }
+    addMessage("user", text);
+    setStatus("Thinking");
+    savePatIfNeeded();
+    callGitHubModel(text)
+      .then((reply) => {
+        addMessage("assistant", reply);
+        speak(reply);
+        setStatus("Idle");
+      })
+      .catch((error) => {
+        addMessage("system", error.message);
+        setStatus("Error");
+      });
   };
   return rec;
 }
@@ -255,6 +283,9 @@ async function callGitHubModel(userText) {
 
 function speak(text) {
   if (!("speechSynthesis" in window)) return;
+  // Cancel any pending or active speech before queuing a new utterance.
+  // Without this, iOS loops the speech indefinitely due to a known browser bug.
+  speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.onstart = () => setStatus("Speaking");
   utterance.onend = () => setStatus("Idle");
@@ -269,8 +300,11 @@ function savePatIfNeeded() {
   }
 }
 
-async function beginTalk() {
-  if (!mediaStream) await initAudioDevices();
+function beginTalk() {
+  // Do NOT await initAudioDevices here — awaiting before speechRecognition.start()
+  // breaks the iOS requirement that start() must be called synchronously within a
+  // user-gesture handler. initAudioDevices is only needed for the visualizer.
+  if (!mediaStream) initAudioDevices();
   if (!speechRecognition) speechRecognition = buildSpeechRecognition();
   if (!speechRecognition) {
     addMessage("system", "SpeechRecognition is unsupported in this browser.");
@@ -281,29 +315,25 @@ async function beginTalk() {
   transcriptEl.textContent = "Listening…";
   pttBtn.classList.add("active");
   setStatus("Listening");
-  speechRecognition.start();
+  isListening = true;
+  try {
+    speechRecognition.start();
+  } catch (err) {
+    addMessage("system", `Could not start recognition: ${err.message}`);
+  }
 }
 
-async function endTalk() {
+function endTalk() {
   pttBtn.classList.remove("active");
-  if (speechRecognition) speechRecognition.stop();
-  const text = `${finalTranscript}${interimTranscript}`.trim();
-  if (!text) {
-    setStatus("No speech captured");
-    return;
+  if (speechRecognition) {
+    try {
+      speechRecognition.stop();
+    } catch (err) {
+      // Recognition may have already stopped (e.g. timed out); ignore.
+    }
   }
-  addMessage("user", text);
-  setStatus("Thinking");
-  try {
-    savePatIfNeeded();
-    const reply = await callGitHubModel(text);
-    addMessage("assistant", reply);
-    speak(reply);
-    setStatus("Idle");
-  } catch (error) {
-    addMessage("system", error.message);
-    setStatus("Error");
-  }
+  // Transcript processing has moved to the speechRecognition.onend handler so
+  // that we wait for the browser to deliver all final results before reading them.
 }
 
 enableBtn.addEventListener("click", initAudioDevices);
