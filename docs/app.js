@@ -108,13 +108,34 @@ function buildSpeechRecognition(wakeWordMode) {
       }
       transcriptEl.textContent = `${finalTranscript}${interimTranscript}`.trim() || "—";
     };
-    rec.onend = () => {
-      isListening = false;
-      setStatus("Idle");
-    };
     rec.onerror = (event) => {
       isListening = false;
+      addMessage("system", `Speech recognition error: ${event.error}`);
       setStatus("Error");
+    };
+    rec.onend = () => {
+      const wasListening = isListening;
+      isListening = false;
+      const text = `${finalTranscript}${interimTranscript}`.trim();
+      finalTranscript = "";
+      interimTranscript = "";
+      transcriptEl.textContent = "—";
+      if (!text) {
+        if (wasListening) setStatus("No speech captured");
+        return;
+      }
+      addMessage("user", text);
+      setStatus("Thinking");
+      savePatIfNeeded();
+      callGitHubModel(text)
+        .then((reply) => {
+          addMessage("assistant", reply);
+          speak(reply);
+        })
+        .catch((error) => {
+          addMessage("system", error.message);
+          setStatus("Error");
+        });
     };
   }
   return rec;
@@ -258,7 +279,6 @@ let mediaStream;
 let audioContext;
 let analyser;
 let animationId;
-let speechRecognition;
 let interimTranscript = "";
 let finalTranscript = "";
 let testToneContext;
@@ -279,10 +299,6 @@ function createAudioContext() {
     throw new Error("Audio output is not supported in this browser.");
   }
   return new AudioContextConstructor();
-}
-
-function setStatus(text) {
-  statusEl.textContent = text;
 }
 
 function addMessage(role, content) {
@@ -502,53 +518,7 @@ async function testSpeaker() {
   }
 }
 
-function buildSpeechRecognition() {
-  const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Ctor) return null;
-  const rec = new Ctor();
-  rec.continuous = true;
-  rec.interimResults = true;
-  rec.lang = "en-US";
-  rec.onresult = (event) => {
-    interimTranscript = "";
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const text = event.results[i][0].transcript;
-      if (event.results[i].isFinal) finalTranscript += `${text} `;
-      else interimTranscript += text;
-    }
-    transcriptEl.textContent = `${finalTranscript}${interimTranscript}`.trim() || "—";
-  };
-  rec.onerror = (event) => {
-    isListening = false;
-    addMessage("system", `Speech recognition error: ${event.error}`);
-    setStatus("Error");
-  };
-  rec.onend = () => {
-    const wasListening = isListening;
-    isListening = false;
-    const text = `${finalTranscript}${interimTranscript}`.trim();
-    finalTranscript = "";
-    interimTranscript = "";
-    transcriptEl.textContent = "—";
-    if (!text) {
-      if (wasListening) setStatus("No speech captured");
-      return;
-    }
-    addMessage("user", text);
-    setStatus("Thinking");
-    savePatIfNeeded();
-    callGitHubModel(text)
-      .then((reply) => {
-        addMessage("assistant", reply);
-        speak(reply);
-      })
-      .catch((error) => {
-        addMessage("system", error.message);
-        setStatus("Error");
-      });
-  };
-  return rec;
-}
+
 
 async function callGitHubModel(userText) {
   const token = patEl.value.trim();
@@ -866,41 +836,7 @@ async function refreshAvailableModels({ force = false, throwOnError = false } = 
   }
 }
 
-async function beginTalk() {
-  if (!mediaStream) {
-    await initAudioDevices();
-    if (!mediaStream) return;
-  }
-  if (!speechRecognition) speechRecognition = buildSpeechRecognition();
-  if (!speechRecognition) {
-    addMessage("system", "SpeechRecognition is unsupported in this browser.");
-    return;
-  }
-  if (isListening) return;
-  finalTranscript = "";
-  interimTranscript = "";
-  transcriptEl.textContent = "Listening…";
-  setStatus("Listening");
-  isListening = true;
-  try {
-    speechRecognition.start();
-  } catch (err) {
-    isListening = false;
-    addMessage("system", `Could not start recognition: ${err.message}`);
-  }
-}
 
-function endTalk() {
-  pttBtn.classList.remove("active");
-  if (speechRecognition && isListening) {
-    try {
-      speechRecognition.stop();
-    } catch (err) {
-    }
-  } else {
-    setStatus("Idle");
-  }
-}
 
 if ("PointerEvent" in window) {
   enableBtn.addEventListener("pointerdown", (event) => {
