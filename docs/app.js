@@ -15,6 +15,7 @@ const ctx = canvas.getContext("2d");
 
 const GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference/chat/completions";
 const GITHUB_MODELS_LIST_ENDPOINT = "https://models.github.ai/catalog/models";
+const GITHUB_API_VERSION = "2022-11-28";
 const TEST_TONE_GAIN = 0.05;
 const TEST_TONE_FREQUENCY = 880;
 const MODEL_TEMPERATURE = 0.4;
@@ -340,39 +341,48 @@ async function callGitHubModel(userText) {
   if (!token) throw new Error("PAT is required.");
   await refreshAvailableModels({
     force: token !== lastLoadedModelsToken,
-    throwOnError: true
+    throwOnError: false
   });
 
   messages.push({ role: "user", content: userText });
   const makeRequest = async () => {
-    const response = await fetch(GITHUB_MODELS_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        model: modelEl.value,
-        messages,
-        temperature: MODEL_TEMPERATURE,
-        max_tokens: MODEL_MAX_TOKENS
-      })
-    });
-    if (!response.ok) {
-      const errText = await response.text();
-      let errorCode = "";
-      try {
-        const parsed = JSON.parse(errText);
-        errorCode = parsed?.error?.code || "";
-      } catch (parseError) {
+    try {
+      const response = await fetch(GITHUB_MODELS_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": GITHUB_API_VERSION,
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          model: modelEl.value,
+          messages,
+          temperature: MODEL_TEMPERATURE,
+          max_tokens: MODEL_MAX_TOKENS
+        })
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        let errorCode = "";
+        try {
+          const parsed = JSON.parse(errText);
+          errorCode = parsed?.error?.code || "";
+        } catch (parseError) {
+        }
+        const requestError = new Error(`GitHub Models request failed (${response.status}): ${errText}`);
+        requestError.code = errorCode;
+        requestError.status = response.status;
+        throw requestError;
       }
-      const requestError = new Error(`GitHub Models request failed (${response.status}): ${errText}`);
-      requestError.code = errorCode;
-      requestError.status = response.status;
-      throw requestError;
+      return response.json();
+    } catch (error) {
+      const isNetworkError = error instanceof TypeError;
+      if (isNetworkError) {
+        throw new Error(`Failed to reach GitHub Models endpoint. Check: 1) network connectivity, 2) GitHub Models service status, 3) browser extensions/privacy blockers, 4) VPN/proxy settings, 5) firewall rules. Original error: ${error.message}`);
+      }
+      throw error;
     }
-    return response.json();
   };
 
   try {
@@ -386,7 +396,7 @@ async function callGitHubModel(userText) {
     const isUnknownModel = error?.code === "unknown_model"
       || String(error?.message || "").includes("unknown_model");
     if (!isUnknownModel) throw error;
-    await refreshAvailableModels({ force: true, throwOnError: true });
+    await refreshAvailableModels({ force: true, throwOnError: false });
     ensureValidSelectedModel();
     const data = await makeRequest();
     const content = data?.choices?.[0]?.message?.content;
@@ -589,6 +599,7 @@ async function refreshAvailableModels({ force = false, throwOnError = false } = 
       method: "GET",
       headers: {
         Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
         Authorization: `Bearer ${token}`
       }
     });
