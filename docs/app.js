@@ -91,7 +91,27 @@ function buildSpeechRecognition(wakeWordMode) {
       isListening = false;
       wakeWordActive = false;
       if (pttBtn.classList.contains("active")) pttBtn.classList.remove("active");
-      startWakeWordDetection();
+      const text = `${finalTranscript}${interimTranscript}`.trim();
+      finalTranscript = "";
+      interimTranscript = "";
+      transcriptEl.textContent = "—";
+      if (text) {
+        addMessage("user", text);
+        setStatus("Thinking");
+        savePatIfNeeded();
+        callGitHubModel(text)
+          .then((reply) => {
+            addMessage("assistant", reply);
+            speak(reply, () => startWakeWordDetection());
+          })
+          .catch((error) => {
+            addMessage("system", error.message);
+            setStatus("Error");
+            startWakeWordDetection();
+          });
+      } else {
+        startWakeWordDetection();
+      }
     };
     rec.onerror = (event) => {
       isListening = false;
