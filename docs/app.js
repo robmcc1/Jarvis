@@ -4,6 +4,8 @@
 let wakeWordRecognition;
 let wakeWordActive = false;
 let speechRecognition = null;
+let pendingTalkMode = null; // null = none pending; false = PTT mode; true = wake word mode
+let silenceTimer = null;
 const WAKE_WORD = "jarvis";
 const WAKE_WORD_SILENCE_MS = 2000;
 
@@ -25,9 +27,10 @@ function buildWakeWordRecognition() {
     }
     if (!wakeWordActive && transcript.includes(WAKE_WORD)) {
       wakeWordActive = true;
-      stopWakeWordDetection();
+      pendingTalkMode = true;
       pttBtn.classList.add("active");
-      beginTalk(true); // true = wake word mode
+      stopWakeWordDetection(); // sets wakeWordRecognition = null, calls old.stop()
+      // beginTalk is deferred to onend so the recognizer fully stops first (required on iOS)
     }
   };
   rec.onerror = (event) => {
@@ -42,6 +45,15 @@ function buildWakeWordRecognition() {
     setStatus("Waiting");
   };
   rec.onend = () => {
+    // If a talk session is pending (wake word detected or PTT pressed while this
+    // recognizer was active), start it now that the recognizer has fully stopped.
+    // This is critical on iOS where two SpeechRecognition instances cannot overlap.
+    if (pendingTalkMode !== null) {
+      const mode = pendingTalkMode;
+      pendingTalkMode = null;
+      beginTalk(mode);
+      return;
+    }
     if (rec !== wakeWordRecognition) return; // stale instance, ignore
     if (!wakeWordActive) {
       try { rec.start(); } catch (e) {}
@@ -75,10 +87,10 @@ function buildSpeechRecognition(wakeWordMode) {
   rec.interimResults = true;
   rec.lang = "en-US";
   if (wakeWordMode) {
-    let silenceTimer;
     const resetSilence = () => {
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => {
+        silenceTimer = null;
         if (isListening) {
           endTalk();
         }
@@ -122,7 +134,7 @@ function buildSpeechRecognition(wakeWordMode) {
     };
     rec.onerror = (event) => {
       isListening = false;
-      setStatus("Error");
+      if (event.error !== "aborted") setStatus("Error");
       wakeWordActive = false;
       if (pttBtn.classList.contains("active")) pttBtn.classList.remove("active");
       startWakeWordDetection();
@@ -139,8 +151,11 @@ function buildSpeechRecognition(wakeWordMode) {
     };
     rec.onerror = (event) => {
       isListening = false;
-      addMessage("system", `Speech recognition error: ${event.error}`);
+      if (event.error !== "aborted") {
+        addMessage("system", `Speech recognition error: ${event.error}`);
+      }
       setStatus("Error");
+      startWakeWordDetection();
     };
     rec.onend = () => {
       const wasListening = isListening;
@@ -151,6 +166,7 @@ function buildSpeechRecognition(wakeWordMode) {
       transcriptEl.textContent = "—";
       if (!text) {
         if (wasListening) setStatus("No speech captured");
+        startWakeWordDetection();
         return;
       }
       addMessage("user", text);
@@ -159,11 +175,12 @@ function buildSpeechRecognition(wakeWordMode) {
       callGitHubModel(text)
         .then((reply) => {
           addMessage("assistant", reply);
-          speak(reply);
+          speak(reply, () => startWakeWordDetection());
         })
         .catch((error) => {
           addMessage("system", error.message);
           setStatus("Error");
+          startWakeWordDetection();
         });
     };
   }
@@ -171,9 +188,18 @@ function buildSpeechRecognition(wakeWordMode) {
 }
 
 async function beginTalk(wakeWordMode) {
+  if (isListening) return;
   if (!mediaStream) {
     await initAudioDevices();
     if (!mediaStream) return;
+  }
+  // If the wake word recognizer is still active, stop it and defer the start.
+  // On iOS, two SpeechRecognition instances cannot run simultaneously, so we
+  // must wait for the existing one to fully stop (via its onend) before starting a new one.
+  if (wakeWordRecognition) {
+    pendingTalkMode = wakeWordMode;
+    stopWakeWordDetection();
+    return;
   }
   if (speechRecognition) {
     try { speechRecognition.stop(); } catch (e) {}
@@ -184,7 +210,6 @@ async function beginTalk(wakeWordMode) {
     addMessage("system", "SpeechRecognition is unsupported in this browser.");
     return;
   }
-  if (isListening) return;
   finalTranscript = "";
   interimTranscript = "";
   transcriptEl.textContent = "Listening…";
@@ -199,17 +224,18 @@ async function beginTalk(wakeWordMode) {
 }
 
 function endTalk() {
+  if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
   if (speechRecognition && isListening) {
     try {
       speechRecognition.stop();
     } catch (err) {}
+    // Wake word detection restart is handled by speechRecognition.onend
   } else {
     setStatus("Idle");
   }
   isListening = false;
   wakeWordActive = false;
   if (pttBtn.classList.contains("active")) pttBtn.classList.remove("active");
-  startWakeWordDetection();
 }
 
 // Start wake word detection on page load
@@ -610,15 +636,23 @@ async function callGitHubModel(userText) {
   } catch (error) {
     const isUnknownModel = error?.code === "unknown_model"
       || String(error?.message || "").includes("unknown_model");
-    if (!isUnknownModel) throw error;
+    if (!isUnknownModel) {
+      messages.pop(); // roll back the uncommitted user message
+      throw error;
+    }
     await refreshAvailableModels({ force: true, throwOnError: false });
     ensureValidSelectedModel();
-    const data = await makeRequest();
-    const content = data?.choices?.[0]?.message?.content;
-    const assistantText = typeof content === "string" ? content.trim() : "";
-    if (!assistantText) throw new Error("Model returned empty response.");
-    messages.push({ role: "assistant", content: assistantText });
-    return assistantText;
+    try {
+      const data = await makeRequest();
+      const content = data?.choices?.[0]?.message?.content;
+      const assistantText = typeof content === "string" ? content.trim() : "";
+      if (!assistantText) throw new Error("Model returned empty response.");
+      messages.push({ role: "assistant", content: assistantText });
+      return assistantText;
+    } catch (retryError) {
+      messages.pop(); // roll back the uncommitted user message
+      throw retryError;
+    }
   }
 }
 
@@ -641,11 +675,14 @@ async function runInferenceTest() {
   addMessage("system", `Testing inference with model ${requestedModel}.`);
   addMessage("user", TEST_INFERENCE_PROMPT);
 
+  const savedMessageCount = messages.length;
   try {
     const reply = await callGitHubModel(TEST_INFERENCE_PROMPT);
+    messages.splice(savedMessageCount); // discard test messages from AI context
     addMessage("assistant", reply);
     setStatus("Inference test passed");
   } catch (error) {
+    messages.splice(savedMessageCount); // callGitHubModel already rolled back on error, but be safe
     addMessage("system", `Inference test failed for ${requestedModel}: ${error.message}`);
     setStatus("Inference test failed");
   } finally {
