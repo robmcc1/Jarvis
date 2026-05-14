@@ -35,6 +35,9 @@ function buildWakeWordRecognition() {
       try { rec.start(); } catch (e) {}
     }, 1000);
   };
+  rec.onstart = () => {
+    setStatus("Waiting");
+  };
   rec.onend = () => {
     if (!wakeWordActive) {
       try { rec.start(); } catch (e) {}
@@ -48,7 +51,6 @@ function startWakeWordDetection() {
     try { wakeWordRecognition.stop(); } catch (e) {}
   }
   wakeWordRecognition = buildWakeWordRecognition();
-  setStatus("Waiting");
   try { wakeWordRecognition.start(); } catch (e) {}
 }
 
