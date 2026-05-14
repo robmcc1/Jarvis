@@ -1,9 +1,14 @@
 // --- Wake Word Detection ---
+
+// --- Wake Word & Main Recognition Switching ---
 let wakeWordRecognition;
 let wakeWordActive = false;
 let wakeWordSilenceTimeout;
 const WAKE_WORD = "jarvis";
 const WAKE_WORD_SILENCE_MS = 2000;
+
+// Save original buildSpeechRecognition
+const _buildSpeechRecognition = buildSpeechRecognition;
 
 function buildWakeWordRecognition() {
   const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -19,14 +24,10 @@ function buildWakeWordRecognition() {
     }
     if (!wakeWordActive && transcript.includes(WAKE_WORD)) {
       wakeWordActive = true;
+      stopWakeWordDetection();
       // Simulate pressing the PTT button
       pttBtn.classList.add("active");
-      beginTalk();
-      // Start silence timer
-      resetWakeWordSilenceTimer();
-    } else if (wakeWordActive) {
-      // Reset silence timer on any speech
-      resetWakeWordSilenceTimer();
+      beginTalk(true); // true = wake word mode
     }
   };
   rec.onerror = (event) => {
@@ -37,20 +38,11 @@ function buildWakeWordRecognition() {
   };
   rec.onend = () => {
     // Always restart for wake word
-    try { rec.start(); } catch (e) {}
+    if (!wakeWordActive) {
+      try { rec.start(); } catch (e) {}
+    }
   };
   return rec;
-}
-
-function resetWakeWordSilenceTimer() {
-  if (wakeWordSilenceTimeout) clearTimeout(wakeWordSilenceTimeout);
-  wakeWordSilenceTimeout = setTimeout(() => {
-    if (wakeWordActive) {
-      wakeWordActive = false;
-      endTalk();
-      if (pttBtn.classList.contains("active")) pttBtn.classList.remove("active");
-    }
-  }, WAKE_WORD_SILENCE_MS);
 }
 
 function startWakeWordDetection() {
@@ -64,9 +56,94 @@ function stopWakeWordDetection() {
   if (wakeWordRecognition) {
     try { wakeWordRecognition.stop(); } catch (e) {}
   }
-  if (wakeWordSilenceTimeout) clearTimeout(wakeWordSilenceTimeout);
-  wakeWordActive = false;
 }
+
+// Patch buildSpeechRecognition to add silence timeout and handoff
+function buildSpeechRecognition(wakeWordMode) {
+  const rec = _buildSpeechRecognition();
+  if (!rec) return null;
+  if (wakeWordMode) {
+    // Add silence timeout for wake word mode
+    let silenceTimer;
+    const resetSilence = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        // End talk and return to wake word mode
+        if (isListening) {
+          endTalk();
+        }
+      }, WAKE_WORD_SILENCE_MS);
+    };
+    rec.onresult = (event) => {
+      interimTranscript = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const text = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalTranscript += `${text} `;
+        else interimTranscript += text;
+      }
+      transcriptEl.textContent = `${finalTranscript}${interimTranscript}`.trim() || "—";
+      resetSilence();
+    };
+    rec.onend = () => {
+      isListening = false;
+      // Return to wake word mode
+      wakeWordActive = false;
+      if (pttBtn.classList.contains("active")) pttBtn.classList.remove("active");
+      startWakeWordDetection();
+    };
+    rec.onerror = (event) => {
+      isListening = false;
+      setStatus("Error");
+      wakeWordActive = false;
+      if (pttBtn.classList.contains("active")) pttBtn.classList.remove("active");
+      startWakeWordDetection();
+    };
+  }
+  return rec;
+}
+
+// Patch beginTalk to accept wakeWordMode
+const _beginTalk = beginTalk;
+async function beginTalk(wakeWordMode) {
+  if (!mediaStream) {
+    await initAudioDevices();
+    if (!mediaStream) return;
+  }
+  if (!speechRecognition) speechRecognition = buildSpeechRecognition(wakeWordMode);
+  if (!speechRecognition) {
+    addMessage("system", "SpeechRecognition is unsupported in this browser.");
+    return;
+  }
+  if (isListening) return;
+  finalTranscript = "";
+  interimTranscript = "";
+  transcriptEl.textContent = "Listening…";
+  setStatus("Listening");
+  isListening = true;
+  try {
+    speechRecognition.start();
+  } catch (err) {
+    isListening = false;
+    addMessage("system", `Could not start recognition: ${err.message}`);
+  }
+}
+
+// Patch endTalk to always return to wake word mode
+const _endTalk = endTalk;
+function endTalk() {
+  if (speechRecognition && isListening) {
+    try {
+      speechRecognition.stop();
+    } catch (err) {}
+  } else {
+    setStatus("Idle");
+  }
+  isListening = false;
+  wakeWordActive = false;
+  if (pttBtn.classList.contains("active")) pttBtn.classList.remove("active");
+  startWakeWordDetection();
+}
+
 // Start wake word detection on page load
 startWakeWordDetection();
 const statusEl = document.getElementById("status");
