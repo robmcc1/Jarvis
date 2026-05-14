@@ -106,6 +106,10 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   font-size: 1rem;
   font-weight: 600;
   border-color: #5db7ff;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  -webkit-touch-callout: none;
 }
 
 .ptt.active {
