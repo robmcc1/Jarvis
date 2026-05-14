@@ -253,6 +253,17 @@ const speakerSelectEl = document.getElementById("speakerSelect");
 const speakTestBtn = document.getElementById("speakTest");
 const audioOut = document.getElementById("audioOut");
 const voiceSelectEl = document.getElementById("voiceSelect");
+
+// --- Collapsible panels ---
+document.querySelectorAll(".collapse-toggle").forEach(toggle => {
+  toggle.addEventListener("click", () => {
+    const expanded = toggle.getAttribute("aria-expanded") === "true";
+    toggle.setAttribute("aria-expanded", String(!expanded));
+    const body = document.getElementById(toggle.getAttribute("aria-controls"));
+    if (body) body.classList.toggle("collapsed", expanded);
+  });
+});
+
 // --- Voice Picker ---
 let availableVoices = [];
 
