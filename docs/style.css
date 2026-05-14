@@ -124,7 +124,14 @@ h3 { font-size: 0.95rem; color: #95d5ff; }
 }
 
 .collapse-toggle:hover { border-color: #58b6ff; }
-.collapse-toggle:hover h2 { color: #c8ecff; }
+.collapse-toggle:hover .collapse-heading { color: #c8ecff; }
+
+.collapse-heading {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--label);
+  margin: 0;
+}
 
 .chevron {
   font-size: 0.7rem;

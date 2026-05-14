@@ -702,10 +702,29 @@ async function runInferenceTest() {
   }
 }
 
+let speechSynthesisPrimed = false;
+let speechKeepAliveInterval = null;
+
+// iOS Safari requires speechSynthesis.speak() to be called within a user gesture
+// at least once before it can be used asynchronously. Call this from any user gesture.
+function primeSpeechSynthesisForIOS() {
+  if (speechSynthesisPrimed || !('speechSynthesis' in window)) return;
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  if (!isIOS) { speechSynthesisPrimed = true; return; }
+  const primer = new SpeechSynthesisUtterance('');
+  primer.volume = 0;
+  window.speechSynthesis.speak(primer);
+  speechSynthesisPrimed = true;
+}
+
 function speak(text, onComplete) {
   if (!('speechSynthesis' in window)) {
     if (typeof onComplete === 'function') onComplete();
     return;
+  }
+  if (speechKeepAliveInterval) {
+    clearInterval(speechKeepAliveInterval);
+    speechKeepAliveInterval = null;
   }
   speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
@@ -715,12 +734,32 @@ function speak(text, onComplete) {
     const selected = availableVoices.find(v => v.name === selectedVoiceName);
     if (selected) utterance.voice = selected;
   }
-  utterance.onstart = () => setStatus('Speaking');
+  // iOS Safari silently stops utterances after ~15s; pause/resume keepalive prevents this.
+  utterance.onstart = () => {
+    setStatus('Speaking');
+    speechKeepAliveInterval = setInterval(() => {
+      if (!speechSynthesis.speaking) {
+        clearInterval(speechKeepAliveInterval);
+        speechKeepAliveInterval = null;
+        return;
+      }
+      speechSynthesis.pause();
+      speechSynthesis.resume();
+    }, 10000);
+  };
+  const cleanup = () => {
+    if (speechKeepAliveInterval) {
+      clearInterval(speechKeepAliveInterval);
+      speechKeepAliveInterval = null;
+    }
+  };
   utterance.onend = () => {
+    cleanup();
     setStatus('Idle');
     if (typeof onComplete === 'function') onComplete();
   };
   utterance.onerror = () => {
+    cleanup();
     setStatus('Idle');
     if (typeof onComplete === 'function') onComplete();
   };
@@ -902,6 +941,17 @@ async function refreshAvailableModels({ force = false, throwOnError = false } = 
     lastModelLoadError = "";
     return true;
   } catch (error) {
+    // A TypeError with no response means a network/CORS failure (no 'Access-Control-Allow-Origin').
+    // Fall back silently to the built-in model list so the PAT still works for inference.
+    const isCorsOrNetwork = error instanceof TypeError;
+    if (isCorsOrNetwork) {
+      console.warn("Model catalog fetch blocked (CORS). Falling back to default model list.", error);
+      setModelOptions(DEFAULT_MODELS, modelEl.value);
+      ensureValidSelectedModel();
+      lastLoadedModelsToken = token;
+      lastModelLoadError = "";
+      return true;
+    }
     const modelLoadMessage = `Model list refresh failed. ${error.message}`;
     if (modelLoadMessage !== lastModelLoadError) {
       addMessage("system", modelLoadMessage);
@@ -920,12 +970,14 @@ async function refreshAvailableModels({ force = false, throwOnError = false } = 
 if ("PointerEvent" in window) {
   enableBtn.addEventListener("pointerdown", (event) => {
     event.preventDefault();
+    primeSpeechSynthesisForIOS();
     initAudioDevices();
   });
 } else {
-  enableBtn.addEventListener("click", initAudioDevices);
+  enableBtn.addEventListener("click", () => { primeSpeechSynthesisForIOS(); initAudioDevices(); });
   enableBtn.addEventListener("touchstart", (event) => {
     event.preventDefault();
+    primeSpeechSynthesisForIOS();
     initAudioDevices();
   }, { passive: false });
 }
@@ -934,7 +986,7 @@ enableBtn.addEventListener("keydown", (event) => {
   event.preventDefault();
   initAudioDevices();
 });
-speakTestBtn.addEventListener("click", testSpeaker);
+speakTestBtn.addEventListener("click", () => { primeSpeechSynthesisForIOS(); testSpeaker(); });
 testInferenceBtn.addEventListener("click", runInferenceTest);
 speakerSelectEl.addEventListener("change", setAudioOutputDevice);
 rememberPatEl.addEventListener("change", savePatIfNeeded);
@@ -949,6 +1001,7 @@ patEl.addEventListener("blur", () => {
 if ("PointerEvent" in window) {
   pttBtn.addEventListener("pointerdown", (event) => {
     event.preventDefault();
+    primeSpeechSynthesisForIOS();
     pttBtn.classList.add("active");
     beginTalk();
   });
@@ -968,6 +1021,7 @@ if ("PointerEvent" in window) {
   });
   pttBtn.addEventListener("touchstart", (event) => {
     event.preventDefault();
+    primeSpeechSynthesisForIOS();
     pttBtn.classList.add("active");
     beginTalk();
   }, { passive: false });
