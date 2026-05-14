@@ -20,7 +20,7 @@ const TEST_TONE_FREQUENCY = 880;
 const MODEL_TEMPERATURE = 0.4;
 const MODEL_MAX_TOKENS = 500;
 const MODEL_LOAD_WAIT_TIMEOUT_MS = 5000;
-const TEST_INFERENCE_MESSAGE = "Testing test test";
+const TEST_INFERENCE_PROMPT = "Testing test test";
 const DEFAULT_MODELS = [
   "openai/gpt-4.1-mini",
   "openai/gpt-4.1",
@@ -414,10 +414,10 @@ async function runInferenceTest() {
   savePatIfNeeded();
   setStatus("Testing inference");
   addMessage("system", `Testing inference with model ${requestedModel}.`);
-  addMessage("user", TEST_INFERENCE_MESSAGE);
+  addMessage("user", TEST_INFERENCE_PROMPT);
 
   try {
-    const reply = await callGitHubModel(TEST_INFERENCE_MESSAGE);
+    const reply = await callGitHubModel(TEST_INFERENCE_PROMPT);
     addMessage("assistant", reply);
     setStatus("Inference test passed");
   } catch (error) {
