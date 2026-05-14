@@ -12,8 +12,8 @@ const audioOut = document.getElementById("audioOut");
 const canvas = document.getElementById("visualizer");
 const ctx = canvas.getContext("2d");
 
-const GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com/chat/completions";
-const GITHUB_MODELS_LIST_ENDPOINT = "https://models.inference.ai.azure.com/models";
+const GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference/chat/completions";
+const GITHUB_MODELS_LIST_ENDPOINT = "https://models.github.ai/catalog/models";
 const TEST_TONE_GAIN = 0.05;
 const TEST_TONE_FREQUENCY = 880;
 const MODEL_TEMPERATURE = 0.4;
@@ -341,6 +341,7 @@ async function callGitHubModel(userText) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Accept: "application/vnd.github+json",
         Authorization: `Bearer ${token}`
       },
       body: JSON.stringify({
@@ -547,6 +548,7 @@ async function refreshAvailableModels({ force = false, throwOnError = false } = 
     const response = await fetch(GITHUB_MODELS_LIST_ENDPOINT, {
       method: "GET",
       headers: {
+        Accept: "application/vnd.github+json",
         Authorization: `Bearer ${token}`
       }
     });
