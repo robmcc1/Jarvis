@@ -10,6 +10,54 @@ const enableBtn = document.getElementById("enableDevices");
 const speakerSelectEl = document.getElementById("speakerSelect");
 const speakTestBtn = document.getElementById("speakTest");
 const audioOut = document.getElementById("audioOut");
+const voiceSelectEl = document.getElementById("voiceSelect");
+// --- Voice Picker ---
+let availableVoices = [];
+
+function populateVoiceList() {
+  if (!('speechSynthesis' in window)) {
+    voiceSelectEl.innerHTML = '<option value="">(No voices available)</option>';
+    return;
+  }
+  availableVoices = window.speechSynthesis.getVoices();
+  voiceSelectEl.innerHTML = '';
+  availableVoices.forEach((voice, i) => {
+    const option = document.createElement('option');
+    option.value = voice.name;
+    option.textContent = `${voice.name} (${voice.lang})${voice.default ? ' [default]' : ''}`;
+    voiceSelectEl.appendChild(option);
+  });
+  // Try to select a preferred English voice if available
+  const preferred = availableVoices.find(v => v.lang.startsWith('en') && v.name.toLowerCase().includes('neural'))
+    || availableVoices.find(v => v.lang.startsWith('en'));
+  if (preferred) voiceSelectEl.value = preferred.name;
+}
+
+// iOS Safari: force voices to load after user gesture
+function ensureVoicesLoadedIOS() {
+  if (!('speechSynthesis' in window)) return;
+  // Only run on iOS
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  if (!isIOS) return;
+  // If no voices, try to force load
+  if (!window.speechSynthesis.getVoices().length) {
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0;
+    window.speechSynthesis.speak(u);
+    setTimeout(populateVoiceList, 250); // Give time for voices to load
+  }
+}
+
+if ('speechSynthesis' in window) {
+  window.speechSynthesis.onvoiceschanged = populateVoiceList;
+  // Try to populate immediately
+  populateVoiceList();
+  // Add user gesture listeners for iOS
+  [voiceSelectEl, document.body].forEach(el => {
+    el.addEventListener('touchend', ensureVoicesLoadedIOS, { once: true });
+    el.addEventListener('click', ensureVoicesLoadedIOS, { once: true });
+  });
+}
 const canvas = document.getElementById("visualizer");
 const ctx = canvas.getContext("2d");
 
@@ -440,20 +488,26 @@ async function runInferenceTest() {
 }
 
 function speak(text, onComplete) {
-  if (!("speechSynthesis" in window)) {
-    if (typeof onComplete === "function") onComplete();
+  if (!('speechSynthesis' in window)) {
+    if (typeof onComplete === 'function') onComplete();
     return;
   }
   speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.onstart = () => setStatus("Speaking");
+  // Set selected voice
+  const selectedVoiceName = voiceSelectEl.value;
+  if (selectedVoiceName && availableVoices.length) {
+    const selected = availableVoices.find(v => v.name === selectedVoiceName);
+    if (selected) utterance.voice = selected;
+  }
+  utterance.onstart = () => setStatus('Speaking');
   utterance.onend = () => {
-    setStatus("Idle");
-    if (typeof onComplete === "function") onComplete();
+    setStatus('Idle');
+    if (typeof onComplete === 'function') onComplete();
   };
   utterance.onerror = () => {
-    setStatus("Idle");
-    if (typeof onComplete === "function") onComplete();
+    setStatus('Idle');
+    if (typeof onComplete === 'function') onComplete();
   };
   speechSynthesis.speak(utterance);
 }
