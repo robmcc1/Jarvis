@@ -379,7 +379,7 @@ async function callGitHubModel(userText) {
     } catch (error) {
       const isNetworkError = error instanceof TypeError;
       if (isNetworkError) {
-        throw new Error("Failed to connect to models.github.ai. Check: 1) network connectivity, 2) browser extensions/privacy blockers, 3) VPN/proxy settings, 4) firewall rules.");
+        throw new Error(`Network request failed. Check: 1) network connectivity, 2) browser extensions/privacy blockers, 3) VPN/proxy settings, 4) firewall rules. Original error: ${error.message}`);
       }
       throw error;
     }
@@ -396,10 +396,8 @@ async function callGitHubModel(userText) {
     const isUnknownModel = error?.code === "unknown_model"
       || String(error?.message || "").includes("unknown_model");
     if (!isUnknownModel) throw error;
-    const refreshedModels = await refreshAvailableModels({ force: true, throwOnError: false });
-    if (refreshedModels) {
-      ensureValidSelectedModel();
-    }
+    await refreshAvailableModels({ force: true, throwOnError: false });
+    ensureValidSelectedModel();
     const data = await makeRequest();
     const content = data?.choices?.[0]?.message?.content;
     const assistantText = typeof content === "string" ? content.trim() : "";
