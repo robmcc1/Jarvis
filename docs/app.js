@@ -25,6 +25,16 @@ const DEFAULT_MODELS = [
   "meta/Llama-3.3-70B-Instruct",
   "mistral-ai/Mistral-Large-2411"
 ];
+const MODEL_PREFIX_ALLOWLIST = [
+  "openai/",
+  "meta/",
+  "mistral-ai/",
+  "cohere/",
+  "deepseek/",
+  "microsoft/",
+  "xai/",
+  "ai21/"
+];
 let messages = [{ role: "system", content: "You are Jarvis: concise, capable, and helpful." }];
 
 let mediaStream;
@@ -147,9 +157,6 @@ async function initAudioDevices() {
       setStatus("Microphone ready");
       return;
     }
-    // Create AudioContext synchronously within the user-gesture context, before
-    // any await.  iOS Safari drops the user-gesture flag after the first async
-    // suspension point and will refuse to create an AudioContext afterwards.
     if (!audioContext) {
       audioContext = createAudioContext();
     }
@@ -218,7 +225,6 @@ async function ensureToneOutput() {
   try {
     await audioOut.play();
   } catch (error) {
-    // User gesture is required in some browsers; click event usually satisfies this.
     console.debug("Audio output play() not ready yet:", error);
   }
 }
@@ -294,9 +300,6 @@ function buildSpeechRecognition() {
     addMessage("system", `Speech recognition error: ${event.error}`);
     setStatus("Error");
   };
-  // Process the captured transcript only after recognition fully stops.
-  // Reading transcripts immediately after stop() is a race condition on mobile —
-  // the browser may not have delivered the final onresult event yet.
   rec.onend = () => {
     const wasListening = isListening;
     isListening = false;
@@ -354,7 +357,6 @@ async function callGitHubModel(userText) {
         const parsed = JSON.parse(errText);
         errorCode = parsed?.error?.code || "";
       } catch (parseError) {
-        // Ignore non-JSON error responses and fall back to text-based diagnostics.
       }
       const requestError = new Error(`GitHub Models request failed (${response.status}): ${errText}`);
       requestError.code = errorCode;
@@ -376,6 +378,7 @@ async function callGitHubModel(userText) {
       || String(error?.message || "").includes("unknown_model");
     if (!isUnknownModel) throw error;
     await refreshAvailableModels({ force: true, throwOnError: true });
+    ensureValidSelectedModel();
     const data = await makeRequest();
     const content = data?.choices?.[0]?.message?.content;
     const assistantText = typeof content === "string" ? content.trim() : "";
@@ -390,8 +393,6 @@ function speak(text, onComplete) {
     if (typeof onComplete === "function") onComplete();
     return;
   }
-  // Cancel any pending or active speech before queuing a new utterance.
-  // Without this, iOS loops the speech indefinitely due to a known browser bug.
   speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.onstart = () => setStatus("Speaking");
@@ -449,6 +450,37 @@ function getModelId(model) {
   return "";
 }
 
+function isSupportedChatModelId(modelId) {
+  return MODEL_PREFIX_ALLOWLIST.some((prefix) => modelId.startsWith(prefix));
+}
+
+function normalizeModelId(model) {
+  const raw = getModelId(model).trim();
+  if (!raw) return "";
+  if (raw.startsWith("azureml://")) return "";
+  if (!raw.includes("/")) return "";
+  if (!isSupportedChatModelId(raw)) return "";
+  return raw;
+}
+
+function buildAvailableModelList(modelEntries) {
+  return [...new Set([
+    ...DEFAULT_MODELS,
+    ...modelEntries.map(normalizeModelId).filter(Boolean)
+  ])];
+}
+
+function ensureValidSelectedModel() {
+  const options = Array.from(modelEl.options).map((option) => option.value).filter(Boolean);
+  if (!options.length) {
+    setModelOptions(DEFAULT_MODELS, DEFAULT_MODELS[0]);
+    return;
+  }
+  if (!options.includes(modelEl.value)) {
+    modelEl.value = options[0];
+  }
+}
+
 async function waitForModelLoadToFinish() {
   const start = Date.now();
   while (isLoadingModels) {
@@ -490,15 +522,14 @@ async function refreshAvailableModels({ force = false, throwOnError = false } = 
 
     const data = await response.json();
     const modelEntries = getModelEntriesFromResponse(data);
-    const availableModels = modelEntries
-      .map(getModelId)
-      .filter(Boolean);
+    const availableModels = buildAvailableModelList(modelEntries);
 
     if (!availableModels.length) {
-      throw new Error("No models were returned for this token. Please verify your PAT has access to GitHub Models.");
+      throw new Error("No compatible chat models were returned for this token. Please verify your PAT has access to GitHub Models.");
     }
 
     setModelOptions(availableModels, modelEl.value);
+    ensureValidSelectedModel();
     lastLoadedModelsToken = token;
     lastModelLoadError = "";
     return true;
@@ -517,15 +548,8 @@ async function refreshAvailableModels({ force = false, throwOnError = false } = 
 }
 
 async function beginTalk() {
-  // On iOS Safari, webkitSpeechRecognition.start() only works after microphone
-  // permission has been explicitly granted via getUserMedia.  Awaiting
-  // initAudioDevices() here is safe because iOS Safari 14.5+ preserves the
-  // user-activation flag across awaits of media-permission APIs, meaning
-  // start() called right after the await is still considered within the gesture.
   if (!mediaStream) {
     await initAudioDevices();
-    // If the mic was denied or unavailable, initAudioDevices sets the status
-    // and logs the error; bail out so we don't start recognition without a mic.
     if (!mediaStream) return;
   }
   if (!speechRecognition) speechRecognition = buildSpeechRecognition();
@@ -553,7 +577,6 @@ function endTalk() {
     try {
       speechRecognition.stop();
     } catch (err) {
-      // Recognition may have already stopped (e.g. timed out); ignore.
     }
   } else {
     setStatus("Idle");
