@@ -4,6 +4,7 @@ const chatEl = document.getElementById("chat");
 const patEl = document.getElementById("pat");
 const rememberPatEl = document.getElementById("rememberPat");
 const modelEl = document.getElementById("model");
+const testInferenceBtn = document.getElementById("testInference");
 const pttBtn = document.getElementById("ptt");
 const enableBtn = document.getElementById("enableDevices");
 const speakerSelectEl = document.getElementById("speakerSelect");
@@ -19,6 +20,7 @@ const TEST_TONE_FREQUENCY = 880;
 const MODEL_TEMPERATURE = 0.4;
 const MODEL_MAX_TOKENS = 500;
 const MODEL_LOAD_WAIT_TIMEOUT_MS = 5000;
+const TEST_INFERENCE_PROMPT = "Testing test test";
 const DEFAULT_MODELS = [
   "openai/gpt-4.1-mini",
   "openai/gpt-4.1",
@@ -52,6 +54,7 @@ let isListening = false;
 let isSpeakerTestActive = false;
 let isInitializingDevices = false;
 let isLoadingModels = false;
+let isTestingInference = false;
 let lastLoadedModelsToken = "";
 let lastModelLoadError = "";
 
@@ -73,6 +76,11 @@ function addMessage(role, content) {
   div.textContent = `${role.toUpperCase()}: ${content}`;
   chatEl.appendChild(div);
   chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+function updateInferenceTestButton() {
+  testInferenceBtn.disabled = isTestingInference;
+  testInferenceBtn.textContent = isTestingInference ? "Testing Inference..." : "Test Model Inference";
 }
 
 function drawIdle() {
@@ -389,6 +397,38 @@ async function callGitHubModel(userText) {
   }
 }
 
+async function runInferenceTest() {
+  if (isTestingInference) return;
+
+  const token = patEl.value.trim();
+  if (!token) {
+    addMessage("system", "Enter a GitHub PAT before testing model inference.");
+    setStatus("PAT required");
+    return;
+  }
+
+  ensureValidSelectedModel();
+  const requestedModel = modelEl.value;
+  isTestingInference = true;
+  updateInferenceTestButton();
+  savePatIfNeeded();
+  setStatus("Testing inference");
+  addMessage("system", `Testing inference with model ${requestedModel}.`);
+  addMessage("user", TEST_INFERENCE_PROMPT);
+
+  try {
+    const reply = await callGitHubModel(TEST_INFERENCE_PROMPT);
+    addMessage("assistant", reply);
+    setStatus("Inference test passed");
+  } catch (error) {
+    addMessage("system", `Inference test failed for ${requestedModel}: ${error.message}`);
+    setStatus("Inference test failed");
+  } finally {
+    isTestingInference = false;
+    updateInferenceTestButton();
+  }
+}
+
 function speak(text, onComplete) {
   if (!("speechSynthesis" in window)) {
     if (typeof onComplete === "function") onComplete();
@@ -641,6 +681,7 @@ enableBtn.addEventListener("keydown", (event) => {
   initAudioDevices();
 });
 speakTestBtn.addEventListener("click", testSpeaker);
+testInferenceBtn.addEventListener("click", runInferenceTest);
 speakerSelectEl.addEventListener("change", setAudioOutputDevice);
 rememberPatEl.addEventListener("change", savePatIfNeeded);
 patEl.addEventListener("change", () => {
@@ -703,4 +744,5 @@ if (savedPat) {
 }
 
 updateSpeakerTestButton();
+updateInferenceTestButton();
 drawIdle();
