@@ -13,11 +13,9 @@ const audioOut = document.getElementById("audioOut");
 const canvas = document.getElementById("visualizer");
 const ctx = canvas.getContext("2d");
 
-const GITHUB_MODELS_ENDPOINTS = [
-  "https://models.github.ai/inference/chat/completions",
-  "https://models.inference.ai.azure.com/chat/completions"
-];
+const GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference/chat/completions";
 const GITHUB_MODELS_LIST_ENDPOINT = "https://models.github.ai/catalog/models";
+const GITHUB_API_VERSION = "2022-11-28";
 const TEST_TONE_GAIN = 0.05;
 const TEST_TONE_FREQUENCY = 880;
 const MODEL_TEMPERATURE = 0.4;
@@ -348,56 +346,43 @@ async function callGitHubModel(userText) {
 
   messages.push({ role: "user", content: userText });
   const makeRequest = async () => {
-    let lastError;
-    for (const endpoint of GITHUB_MODELS_ENDPOINTS) {
-      try {
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/vnd.github+json",
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            model: modelEl.value,
-            messages,
-            temperature: MODEL_TEMPERATURE,
-            max_tokens: MODEL_MAX_TOKENS
-          })
-        });
-        if (!response.ok) {
-          const errText = await response.text();
-          let errorCode = "";
-          try {
-            const parsed = JSON.parse(errText);
-            errorCode = parsed?.error?.code || "";
-          } catch (parseError) {
-          }
-          const requestError = new Error(`GitHub Models request failed (${response.status}) via ${new URL(endpoint).host}: ${errText}`);
-          requestError.code = errorCode;
-          requestError.status = response.status;
-          if (response.status === 404 || response.status === 405) {
-            lastError = requestError;
-            continue;
-          }
-          throw requestError;
+    try {
+      const response = await fetch(GITHUB_MODELS_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": GITHUB_API_VERSION,
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          model: modelEl.value,
+          messages,
+          temperature: MODEL_TEMPERATURE,
+          max_tokens: MODEL_MAX_TOKENS
+        })
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        let errorCode = "";
+        try {
+          const parsed = JSON.parse(errText);
+          errorCode = parsed?.error?.code || "";
+        } catch (parseError) {
         }
-        return response.json();
-      } catch (error) {
-        const message = String(error?.message || "");
-        const isNetworkError = error instanceof TypeError || message.includes("Failed to fetch");
-        if (isNetworkError) {
-          lastError = error;
-          continue;
-        }
-        throw error;
+        const requestError = new Error(`GitHub Models request failed (${response.status}): ${errText}`);
+        requestError.code = errorCode;
+        requestError.status = response.status;
+        throw requestError;
       }
+      return response.json();
+    } catch (error) {
+      const isNetworkError = error instanceof TypeError;
+      if (isNetworkError) {
+        throw new Error("Failed to connect to models.github.ai. Check: 1) network connectivity, 2) browser extensions/privacy blockers, 3) VPN/proxy settings, 4) firewall rules.");
+      }
+      throw error;
     }
-    const fallbackError = lastError || new Error("Unable to reach GitHub Models endpoint.");
-    if (String(fallbackError?.message || "").includes("Failed to fetch")) {
-      throw new Error("Failed to fetch from GitHub Models endpoints. Check browser network privacy settings, extensions, VPN/firewall rules, and PAT access.");
-    }
-    throw fallbackError;
   };
 
   try {
@@ -616,6 +601,7 @@ async function refreshAvailableModels({ force = false, throwOnError = false } = 
       method: "GET",
       headers: {
         Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
         Authorization: `Bearer ${token}`
       }
     });
