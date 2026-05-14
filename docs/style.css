@@ -8,7 +8,7 @@
   --muted: #8aa2b8;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
 
 body {
   margin: 0;
