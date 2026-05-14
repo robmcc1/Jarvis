@@ -379,7 +379,7 @@ async function callGitHubModel(userText) {
     } catch (error) {
       const isNetworkError = error instanceof TypeError;
       if (isNetworkError) {
-        throw new Error(`Network request failed. Check: 1) network connectivity, 2) browser extensions/privacy blockers, 3) VPN/proxy settings, 4) firewall rules. Original error: ${error.message}`);
+        throw new Error(`Failed to reach GitHub Models endpoint. Check: 1) network connectivity, 2) GitHub Models service status, 3) browser extensions/privacy blockers, 4) VPN/proxy settings, 5) firewall rules. Original error: ${error.message}`);
       }
       throw error;
     }
