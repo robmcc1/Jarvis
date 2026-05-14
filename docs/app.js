@@ -1,3 +1,74 @@
+// --- Wake Word Detection ---
+let wakeWordRecognition;
+let wakeWordActive = false;
+let wakeWordSilenceTimeout;
+const WAKE_WORD = "jarvis";
+const WAKE_WORD_SILENCE_MS = 2000;
+
+function buildWakeWordRecognition() {
+  const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Ctor) return null;
+  const rec = new Ctor();
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.lang = "en-US";
+  rec.onresult = (event) => {
+    let transcript = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      transcript += event.results[i][0].transcript.toLowerCase();
+    }
+    if (!wakeWordActive && transcript.includes(WAKE_WORD)) {
+      wakeWordActive = true;
+      // Simulate pressing the PTT button
+      pttBtn.classList.add("active");
+      beginTalk();
+      // Start silence timer
+      resetWakeWordSilenceTimer();
+    } else if (wakeWordActive) {
+      // Reset silence timer on any speech
+      resetWakeWordSilenceTimer();
+    }
+  };
+  rec.onerror = (event) => {
+    // Try to restart on error
+    setTimeout(() => {
+      try { rec.start(); } catch (e) {}
+    }, 1000);
+  };
+  rec.onend = () => {
+    // Always restart for wake word
+    try { rec.start(); } catch (e) {}
+  };
+  return rec;
+}
+
+function resetWakeWordSilenceTimer() {
+  if (wakeWordSilenceTimeout) clearTimeout(wakeWordSilenceTimeout);
+  wakeWordSilenceTimeout = setTimeout(() => {
+    if (wakeWordActive) {
+      wakeWordActive = false;
+      endTalk();
+      if (pttBtn.classList.contains("active")) pttBtn.classList.remove("active");
+    }
+  }, WAKE_WORD_SILENCE_MS);
+}
+
+function startWakeWordDetection() {
+  if (!wakeWordRecognition) wakeWordRecognition = buildWakeWordRecognition();
+  if (wakeWordRecognition) {
+    try { wakeWordRecognition.start(); } catch (e) {}
+  }
+}
+
+function stopWakeWordDetection() {
+  if (wakeWordRecognition) {
+    try { wakeWordRecognition.stop(); } catch (e) {}
+  }
+  if (wakeWordSilenceTimeout) clearTimeout(wakeWordSilenceTimeout);
+  wakeWordActive = false;
+}
+// Start wake word detection on page load
+startWakeWordDetection();
 const statusEl = document.getElementById("status");
 const transcriptEl = document.getElementById("transcript");
 const chatEl = document.getElementById("chat");
