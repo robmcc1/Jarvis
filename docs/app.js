@@ -711,7 +711,7 @@ function primeSpeechSynthesisForIOS() {
   if (speechSynthesisPrimed || !('speechSynthesis' in window)) return;
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
   if (!isIOS) { speechSynthesisPrimed = true; return; }
-  const primer = new SpeechSynthesisUtterance('');
+  const primer = new SpeechSynthesisUtterance(' ');
   primer.volume = 0;
   window.speechSynthesis.speak(primer);
   speechSynthesisPrimed = true;
@@ -763,7 +763,10 @@ function speak(text, onComplete) {
     setStatus('Idle');
     if (typeof onComplete === 'function') onComplete();
   };
-  speechSynthesis.speak(utterance);
+  // iOS Safari silently drops speak() called immediately after cancel().
+  // A short delay gives the engine time to finish cancelling.
+  speechSynthesis.cancel();
+  setTimeout(() => speechSynthesis.speak(utterance), 50);
 }
 
 function savePatIfNeeded() {
