@@ -3,12 +3,13 @@
 // --- Wake Word & Main Recognition Switching ---
 let wakeWordRecognition;
 let wakeWordActive = false;
-let wakeWordSilenceTimeout;
+let speechRecognition = null;
 const WAKE_WORD = "jarvis";
 const WAKE_WORD_SILENCE_MS = 2000;
 
-// Save original buildSpeechRecognition
-const _buildSpeechRecognition = buildSpeechRecognition;
+function setStatus(text) {
+  statusEl.textContent = text;
+}
 
 function buildWakeWordRecognition() {
   const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -25,19 +26,16 @@ function buildWakeWordRecognition() {
     if (!wakeWordActive && transcript.includes(WAKE_WORD)) {
       wakeWordActive = true;
       stopWakeWordDetection();
-      // Simulate pressing the PTT button
       pttBtn.classList.add("active");
       beginTalk(true); // true = wake word mode
     }
   };
   rec.onerror = (event) => {
-    // Try to restart on error
     setTimeout(() => {
       try { rec.start(); } catch (e) {}
     }, 1000);
   };
   rec.onend = () => {
-    // Always restart for wake word
     if (!wakeWordActive) {
       try { rec.start(); } catch (e) {}
     }
@@ -46,10 +44,12 @@ function buildWakeWordRecognition() {
 }
 
 function startWakeWordDetection() {
-  if (!wakeWordRecognition) wakeWordRecognition = buildWakeWordRecognition();
   if (wakeWordRecognition) {
-    try { wakeWordRecognition.start(); } catch (e) {}
+    try { wakeWordRecognition.stop(); } catch (e) {}
   }
+  wakeWordRecognition = buildWakeWordRecognition();
+  setStatus("Waiting");
+  try { wakeWordRecognition.start(); } catch (e) {}
 }
 
 function stopWakeWordDetection() {
@@ -58,17 +58,18 @@ function stopWakeWordDetection() {
   }
 }
 
-// Patch buildSpeechRecognition to add silence timeout and handoff
 function buildSpeechRecognition(wakeWordMode) {
-  const rec = _buildSpeechRecognition();
-  if (!rec) return null;
+  const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Ctor) return null;
+  const rec = new Ctor();
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.lang = "en-US";
   if (wakeWordMode) {
-    // Add silence timeout for wake word mode
     let silenceTimer;
     const resetSilence = () => {
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => {
-        // End talk and return to wake word mode
         if (isListening) {
           endTalk();
         }
@@ -86,7 +87,6 @@ function buildSpeechRecognition(wakeWordMode) {
     };
     rec.onend = () => {
       isListening = false;
-      // Return to wake word mode
       wakeWordActive = false;
       if (pttBtn.classList.contains("active")) pttBtn.classList.remove("active");
       startWakeWordDetection();
@@ -98,18 +98,38 @@ function buildSpeechRecognition(wakeWordMode) {
       if (pttBtn.classList.contains("active")) pttBtn.classList.remove("active");
       startWakeWordDetection();
     };
+  } else {
+    rec.onresult = (event) => {
+      interimTranscript = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const text = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalTranscript += `${text} `;
+        else interimTranscript += text;
+      }
+      transcriptEl.textContent = `${finalTranscript}${interimTranscript}`.trim() || "—";
+    };
+    rec.onend = () => {
+      isListening = false;
+      setStatus("Idle");
+    };
+    rec.onerror = (event) => {
+      isListening = false;
+      setStatus("Error");
+    };
   }
   return rec;
 }
 
-// Patch beginTalk to accept wakeWordMode
-const _beginTalk = beginTalk;
 async function beginTalk(wakeWordMode) {
   if (!mediaStream) {
     await initAudioDevices();
     if (!mediaStream) return;
   }
-  if (!speechRecognition) speechRecognition = buildSpeechRecognition(wakeWordMode);
+  if (speechRecognition) {
+    try { speechRecognition.stop(); } catch (e) {}
+    speechRecognition = null;
+  }
+  speechRecognition = buildSpeechRecognition(wakeWordMode);
   if (!speechRecognition) {
     addMessage("system", "SpeechRecognition is unsupported in this browser.");
     return;
@@ -128,8 +148,6 @@ async function beginTalk(wakeWordMode) {
   }
 }
 
-// Patch endTalk to always return to wake word mode
-const _endTalk = endTalk;
 function endTalk() {
   if (speechRecognition && isListening) {
     try {
