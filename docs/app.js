@@ -597,6 +597,14 @@ async function refreshAvailableModels({ force = false, throwOnError = false } = 
       const responseText = await response.text();
       const responsePreview = responseText ? responseText.slice(0, 200) : "";
       const detail = responsePreview ? ` ${responsePreview}` : "";
+      // Enhanced error logging for debugging
+      console.error("Model list fetch failed:", {
+        status: response.status,
+        statusText: response.statusText,
+        responseText,
+        headers: Array.from(response.headers.entries())
+      });
+      addMessage("system", `Model list fetch failed: Status ${response.status} ${response.statusText}. ${detail}`);
       throw new Error(`Failed to load models (${response.status}).${detail}`);
     }
 
