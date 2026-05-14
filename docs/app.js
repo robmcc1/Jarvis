@@ -461,7 +461,7 @@ async function initAudioDevices() {
     }
     if (mediaStream) {
       await loadOutputDevices();
-      setStatus("Microphone ready");
+      setStatus(wakeWordRecognition ? "Waiting" : "Microphone ready");
       return;
     }
     if (!audioContext) {
@@ -477,7 +477,7 @@ async function initAudioDevices() {
     source.connect(analyser);
     if (!animationId) drawVisualizer();
     await loadOutputDevices();
-    setStatus("Microphone ready");
+    setStatus(wakeWordRecognition ? "Waiting" : "Microphone ready");
   } catch (error) {
     let message = error.message;
     if (error.name === "NotAllowedError") {
