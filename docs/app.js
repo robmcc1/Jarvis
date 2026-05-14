@@ -454,13 +454,51 @@ function isSupportedChatModelId(modelId) {
   return MODEL_PREFIX_ALLOWLIST.some((prefix) => modelId.startsWith(prefix));
 }
 
+function extractModelPathFromAzureRegistryUri(uri) {
+  const match = uri.match(/^azureml:\/\/registries\/[^/]+\/models\/([^/]+)\/versions\/[^/]+$/i);
+  if (!match) return "";
+  return match[1] || "";
+}
+
+function toGitHubModelId(modelPath) {
+  if (!modelPath) return "";
+
+  const vendorMatchers = [
+    { prefix: "openai-", vendor: "openai" },
+    { prefix: "meta-", vendor: "meta" },
+    { prefix: "mistral-", vendor: "mistral-ai" },
+    { prefix: "mistral-ai-", vendor: "mistral-ai" },
+    { prefix: "cohere-", vendor: "cohere" },
+    { prefix: "deepseek-", vendor: "deepseek" },
+    { prefix: "microsoft-", vendor: "microsoft" },
+    { prefix: "xai-", vendor: "xai" },
+    { prefix: "ai21-", vendor: "ai21" }
+  ];
+
+  for (const { prefix, vendor } of vendorMatchers) {
+    if (modelPath.startsWith(prefix)) {
+      const remainder = modelPath.slice(prefix.length);
+      if (!remainder) return "";
+      return `${vendor}/${remainder}`;
+    }
+  }
+
+  return "";
+}
+
 function normalizeModelId(model) {
   const raw = getModelId(model).trim();
   if (!raw) return "";
-  if (raw.startsWith("azureml://")) return "";
-  if (!raw.includes("/")) return "";
-  if (!isSupportedChatModelId(raw)) return "";
-  return raw;
+
+  let candidate = raw;
+  if (raw.startsWith("azureml://")) {
+    candidate = toGitHubModelId(extractModelPathFromAzureRegistryUri(raw));
+  }
+
+  if (!candidate) return "";
+  if (!candidate.includes("/")) return "";
+  if (!isSupportedChatModelId(candidate)) return "";
+  return candidate;
 }
 
 function buildAvailableModelList(modelEntries) {
