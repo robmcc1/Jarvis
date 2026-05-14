@@ -31,14 +31,18 @@ function buildWakeWordRecognition() {
     }
   };
   rec.onerror = (event) => {
+    if (rec !== wakeWordRecognition) return;
     setTimeout(() => {
-      try { rec.start(); } catch (e) {}
+      if (rec === wakeWordRecognition && !wakeWordActive) {
+        try { rec.start(); } catch (e) {}
+      }
     }, 1000);
   };
   rec.onstart = () => {
     setStatus("Waiting");
   };
   rec.onend = () => {
+    if (rec !== wakeWordRecognition) return; // stale instance, ignore
     if (!wakeWordActive) {
       try { rec.start(); } catch (e) {}
     }
@@ -47,16 +51,19 @@ function buildWakeWordRecognition() {
 }
 
 function startWakeWordDetection() {
-  if (wakeWordRecognition) {
-    try { wakeWordRecognition.stop(); } catch (e) {}
-  }
+  const old = wakeWordRecognition;
   wakeWordRecognition = buildWakeWordRecognition();
+  if (old) {
+    try { old.stop(); } catch (e) {}
+  }
   try { wakeWordRecognition.start(); } catch (e) {}
 }
 
 function stopWakeWordDetection() {
-  if (wakeWordRecognition) {
-    try { wakeWordRecognition.stop(); } catch (e) {}
+  const old = wakeWordRecognition;
+  wakeWordRecognition = null;
+  if (old) {
+    try { old.stop(); } catch (e) {}
   }
 }
 
