@@ -326,9 +326,9 @@ const MODEL_MAX_TOKENS = 500;
 const MODEL_LOAD_WAIT_TIMEOUT_MS = 5000;
 const TEST_INFERENCE_PROMPT = "Testing test test";
 const DEFAULT_MODELS = [
+  "meta/Llama-3.3-70B-Instruct",
   "openai/gpt-4.1-mini",
   "openai/gpt-4.1",
-  "meta/Llama-3.3-70B-Instruct",
   "mistral-ai/Mistral-Large-2411"
 ];
 const MODEL_PREFIX_ALLOWLIST = [
@@ -341,7 +341,7 @@ const MODEL_PREFIX_ALLOWLIST = [
   "xai/",
   "ai21/"
 ];
-let messages = [{ role: "system", content: "You are Jarvis: concise, capable, and helpful." }];
+let messages = [{ role: "system", content: "You are Jarvis. Give the best answer possible in the fewest words. Never ramble. Cut every unnecessary word." }];
 
 let mediaStream;
 let audioContext;
