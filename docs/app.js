@@ -13,7 +13,10 @@ const audioOut = document.getElementById("audioOut");
 const canvas = document.getElementById("visualizer");
 const ctx = canvas.getContext("2d");
 
-const GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference/chat/completions";
+const GITHUB_MODELS_ENDPOINTS = [
+  "https://models.github.ai/inference/chat/completions",
+  "https://models.inference.ai.azure.com/chat/completions"
+];
 const GITHUB_MODELS_LIST_ENDPOINT = "https://models.github.ai/catalog/models";
 const TEST_TONE_GAIN = 0.05;
 const TEST_TONE_FREQUENCY = 880;
@@ -340,39 +343,61 @@ async function callGitHubModel(userText) {
   if (!token) throw new Error("PAT is required.");
   await refreshAvailableModels({
     force: token !== lastLoadedModelsToken,
-    throwOnError: true
+    throwOnError: false
   });
 
   messages.push({ role: "user", content: userText });
   const makeRequest = async () => {
-    const response = await fetch(GITHUB_MODELS_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        model: modelEl.value,
-        messages,
-        temperature: MODEL_TEMPERATURE,
-        max_tokens: MODEL_MAX_TOKENS
-      })
-    });
-    if (!response.ok) {
-      const errText = await response.text();
-      let errorCode = "";
+    let lastError;
+    for (const endpoint of GITHUB_MODELS_ENDPOINTS) {
       try {
-        const parsed = JSON.parse(errText);
-        errorCode = parsed?.error?.code || "";
-      } catch (parseError) {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/vnd.github+json",
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            model: modelEl.value,
+            messages,
+            temperature: MODEL_TEMPERATURE,
+            max_tokens: MODEL_MAX_TOKENS
+          })
+        });
+        if (!response.ok) {
+          const errText = await response.text();
+          let errorCode = "";
+          try {
+            const parsed = JSON.parse(errText);
+            errorCode = parsed?.error?.code || "";
+          } catch (parseError) {
+          }
+          const requestError = new Error(`GitHub Models request failed (${response.status}) via ${new URL(endpoint).host}: ${errText}`);
+          requestError.code = errorCode;
+          requestError.status = response.status;
+          if (response.status === 404 || response.status === 405) {
+            lastError = requestError;
+            continue;
+          }
+          throw requestError;
+        }
+        return response.json();
+      } catch (error) {
+        const message = String(error?.message || "");
+        const isNetworkError = error instanceof TypeError || message.includes("Failed to fetch");
+        if (isNetworkError) {
+          lastError = error;
+          continue;
+        }
+        throw error;
       }
-      const requestError = new Error(`GitHub Models request failed (${response.status}): ${errText}`);
-      requestError.code = errorCode;
-      requestError.status = response.status;
-      throw requestError;
     }
-    return response.json();
+    const fallbackError = lastError || new Error("Unable to reach GitHub Models endpoint.");
+    if (String(fallbackError?.message || "").includes("Failed to fetch")) {
+      throw new Error("Failed to fetch from GitHub Models endpoints. Check browser network privacy settings, extensions, VPN/firewall rules, and PAT access.");
+    }
+    throw fallbackError;
   };
 
   try {
@@ -386,8 +411,10 @@ async function callGitHubModel(userText) {
     const isUnknownModel = error?.code === "unknown_model"
       || String(error?.message || "").includes("unknown_model");
     if (!isUnknownModel) throw error;
-    await refreshAvailableModels({ force: true, throwOnError: true });
-    ensureValidSelectedModel();
+    const refreshedModels = await refreshAvailableModels({ force: true, throwOnError: false });
+    if (refreshedModels) {
+      ensureValidSelectedModel();
+    }
     const data = await makeRequest();
     const content = data?.choices?.[0]?.message?.content;
     const assistantText = typeof content === "string" ? content.trim() : "";
