@@ -236,8 +236,9 @@ function populateVoiceList() {
     option.textContent = `${voice.name} (${voice.lang})${voice.default ? ' [default]' : ''}`;
     voiceSelectEl.appendChild(option);
   });
-  // Try to select a preferred English voice if available
-  const preferred = availableVoices.find(v => v.lang.startsWith('en') && v.name.toLowerCase().includes('neural'))
+  // Try to select Google UK English Female first, then fall back
+  const preferred = availableVoices.find(v => v.name === 'Google UK English Female')
+    || availableVoices.find(v => v.lang.startsWith('en') && v.name.toLowerCase().includes('neural'))
     || availableVoices.find(v => v.lang.startsWith('en'));
   if (preferred) voiceSelectEl.value = preferred.name;
 }
@@ -273,7 +274,8 @@ const ctx = canvas.getContext("2d");
 const GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference/chat/completions";
 const GITHUB_MODELS_LIST_ENDPOINT = "https://models.github.ai/catalog/models";
 const GITHUB_API_VERSION = "2022-11-28";
-const TEST_TONE_GAIN = 0.05;
+const TEST_TONE_GAIN = 0.05
+;
 const TEST_TONE_FREQUENCY = 880;
 const MODEL_TEMPERATURE = 0.4;
 const MODEL_MAX_TOKENS = 500;
